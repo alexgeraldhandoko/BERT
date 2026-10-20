@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.pytest_cache/
+.hf_cache/
+data/raw/*.json
+runs/*
+!runs/.gitkeep
+results/*
+!results/README.md
+
