@@ -68,6 +68,122 @@ def _confidence(scores: dict, T: float = 1.0) -> np.ndarray:
     return ps[rows, scores["best_i"]] * pe[rows, scores["best_j"]]
 
 
+def _signal(scores: dict, name: str, T: float = 1.0) -> np.ndarray:
+    """Confidence ranking signal per question, from the scores cache.
+
+    prob: v1 span probability (optionally tempered). Higher = more confident.
+    neg_margin / neg_entropy: ablation signals oriented so that HIGHER =
+    more confident (margin and entropy themselves are lower = more confident).
+    """
+    s, e, mask = scores["s"], scores["e"], scores["mask"]
+    if name == "prob":
+        return _confidence(scores, T=T)
+    if name in ("margin", "neg_margin"):
+        from .confidence import span_margin
+
+        vals = np.array([
+            span_margin(s[k], e[k], mask[k], int(scores["best_i"][k]), int(scores["best_j"][k]), T=T)
+            for k in range(s.shape[0])
+        ])
+        return -vals  # higher margin = more confident -> negate to keep 'higher = confident'
+    if name in ("entropy", "neg_entropy"):
+        from .confidence import entropy_signal
+
+        vals = np.array([entropy_signal(s[k], e[k], mask[k], T=T) for k in range(s.shape[0])])
+        return -vals
+    raise ValueError(f"Unknown signal: {name}")
+
+
+def _threshold_for_error(c: np.ndarray, y: np.ndarray, target_error: float) -> float:
+    """Largest threshold tau (over the val ranking) whose retained set has
+    error <= target_error. Retained = {c >= tau}. Returns the midpoint of the
+    boundary gap so the threshold transfers between monotone transforms.
+    """
+    order = np.argsort(c)[::-1]
+    y_sorted = y[order]
+    c_sorted = c[order]
+    errors = 1.0 - np.cumsum(y_sorted) / np.arange(1, len(y) + 1)
+    eligible = np.nonzero(errors <= target_error)[0]
+    if eligible.size == 0:
+        raise ValueError(
+            f"No confidence prefix reaches target error {target_error:.2%} "
+            f"(best prefix error: {errors.min():.2%} at k={int(np.argmin(errors)) + 1})"
+        )
+    k = int(eligible[-1]) + 1  # largest retained-set size meeting the target
+    if k == len(c_sorted):
+        return float("-inf")
+    return float((c_sorted[k - 1] + c_sorted[k]) / 2.0)
+
+
+def cmd_target(args: argparse.Namespace) -> None:
+    """Stretch goal (handoff section 8): the most persuasive single result.
+
+    Pick a threshold on the VALIDATION partition such that the retained set
+    has <= target error; then report the ACHIEVED error and coverage on dev
+    for each signal. Note: for the temperature-scaled vs uncalibrated
+    comparison the retained set is IDENTICAL (temperature scaling is a
+    monotone map, so rankings are unchanged) — the interesting comparison is
+    ACROSS SIGNALS: span probability vs margin vs entropy.
+    """
+    from .data import load_squad
+
+    val_scores = _load_scores(args.val_scores)
+    dev_scores = _load_scores(args.scores)
+    val_examples = load_squad(args.val_data)
+    dev_examples = load_squad(args.data)
+    val_preds = json.loads(args.val_predictions.read_text(encoding="utf-8"))
+    dev_preds = json.loads(args.predictions.read_text(encoding="utf-8"))
+    y_val = _labels(val_scores, val_examples, val_preds)
+    y_dev = _labels(dev_scores, dev_examples, dev_preds)
+
+    calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
+    T = calibration["temperature"]
+
+    rows = []
+    for signal in ("prob", "margin", "entropy"):
+        c_val = _signal(val_scores, signal)
+        c_dev_uncal = _signal(dev_scores, signal, T=1.0)
+        try:
+            tau = _threshold_for_error(c_val, y_val, args.target_error)
+        except ValueError as exc:
+            # A signal that cannot reach the target is a FINDING, not a crash
+            # (e.g. margin may simply be uninformative enough).
+            rows.append({"signal": signal, "threshold": None,
+                         "dev_coverage": None, "dev_achieved_error": None,
+                         "dev_n_retained": None, "note": str(exc)})
+            continue
+        retained = c_dev_uncal >= tau
+        coverage = float(retained.mean())
+        achieved = float(1 - y_dev[retained].mean()) if retained.any() else float("nan")
+        rows.append({
+            "signal": signal,
+            "threshold": tau,
+            "dev_coverage": coverage,
+            "dev_achieved_error": achieved,
+            "dev_n_retained": int(retained.sum()),
+        })
+
+    print(f"Target error on val: {args.target_error:.0%} (n_val={len(y_val)}, n_dev={len(y_dev)})")
+    print(f"{'signal':>10s} {'threshold':>10s} {'dev cov':>9s} {'dev err':>9s} {'n':>7s}")
+    for r in rows:
+        if r["threshold"] is None:
+            print(f"{r['signal']:>10s}   UNREACHABLE: {r['note']}")
+        else:
+            print(f"{r['signal']:>10s} {r['threshold']:>10.4f} {r['dev_coverage']:>9.2%} "
+                  f"{r['dev_achieved_error']:>9.2%} {r['dev_n_retained']:>7d}")
+
+    output = {
+        "target_error": args.target_error,
+        "temperature": T,
+        "fitted_on": str(args.val_data),
+        "reported_on": str(args.data),
+        "signals": rows,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote {args.output}")
+
+
 def cmd_fit(args: argparse.Namespace) -> None:
     scores = _load_scores(args.scores)
     from .data import load_squad
@@ -275,6 +391,21 @@ def main() -> None:
     report.add_argument("--output", type=Path, default=Path("runs/baseline/calibration-report.json"))
     report.add_argument("--plot-dir", type=Path, default=Path("runs/baseline/plots"))
     report.set_defaults(func=cmd_report)
+
+    target = sub.add_parser(
+        "target",
+        help="error-rate targeting: val threshold for a target error, achieved on dev, per signal",
+    )
+    target.add_argument("--val-scores", type=Path, default=Path("runs/baseline/val-scores.npz"))
+    target.add_argument("--val-data", type=Path, default=Path("runs/baseline/validation-v1.1.json"))
+    target.add_argument("--val-predictions", type=Path, default=Path("runs/baseline/val-predictions.json"))
+    target.add_argument("--scores", type=Path, default=Path("runs/baseline/dev-scores.npz"))
+    target.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
+    target.add_argument("--predictions", type=Path, default=Path("runs/baseline/predictions.json"))
+    target.add_argument("--calibration", type=Path, default=Path("runs/baseline/calibration.json"))
+    target.add_argument("--target-error", type=float, default=0.05)
+    target.add_argument("--output", type=Path, default=Path("runs/baseline/target-report.json"))
+    target.set_defaults(func=cmd_target)
 
     args = parser.parse_args()
     args.func(args)

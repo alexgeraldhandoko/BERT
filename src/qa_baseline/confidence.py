@@ -182,6 +182,87 @@ def risk_coverage(
     return out
 
 
+def entropy_signal(s: np.ndarray, e: np.ndarray, mask: np.ndarray, T: float = 1.0) -> float:
+    """Ablation signal: mean of the start/end softmax entropies over the full row.
+
+    LOWER entropy = more confident. For risk-coverage ranking, sort by the
+    NEGATIVE of this value. Computed over the full window row (same scope as
+    the v1 span probability, not just the n_best grid).
+    """
+    ps = softmax_rows(np.asarray(s, dtype=np.float64) / T)
+    pe = softmax_rows(np.asarray(e, dtype=np.float64) / T)
+    h_s = float(-np.sum(ps * np.log(np.clip(ps, 1e-12, None))))
+    h_e = float(-np.sum(pe * np.log(np.clip(pe, 1e-12, None))))
+    return (h_s + h_e) / 2.0
+
+
+def renormalised_span_probability(
+    s: np.ndarray, e: np.ndarray, mask: np.ndarray, i: int, j: int, T: float = 1.0
+) -> float:
+    """v2 signal (deferred in v1, implemented here for the cache experiments):
+    p = exp(s_i + e_j) / Z over ALL legal spans of the window, with
+    Z = sum over legal (a, b), a <= b, of exp(s_a + e_b).
+
+    Unlike the v1 product, this IS a distribution over answers — it sums to 1
+    over legal spans. Requires full logit rows + context mask, which is why
+    predict.py caches complete rows (no n_best truncation here).
+    """
+    if T <= 0:
+        raise ValueError("Temperature must be positive")
+    s = np.asarray(s, dtype=np.float64) / T
+    e = np.asarray(e, dtype=np.float64) / T
+    scores = s[:, None] + e[None, :]
+    legal = mask[:, None] & mask[None, :]
+    legal &= np.triu(np.ones_like(legal, dtype=bool))  # a <= b
+    if not legal.any():
+        raise ValueError("No legal spans in window")
+    legal_scores = scores[legal]
+    max_score = legal_scores.max()
+    log_z = max_score + np.log(np.exp(legal_scores - max_score).sum())
+    return float(np.exp(s[i] + e[j] - log_z))
+
+
+def fit_two_temperature(
+    s: np.ndarray,
+    e: np.ndarray,
+    mask: np.ndarray,
+    best_i: np.ndarray,
+    best_j: np.ndarray,
+    y: np.ndarray,
+    grid_s: np.ndarray = np.linspace(0.5, 3.0, 26),
+    grid_e: np.ndarray = np.linspace(0.5, 3.0, 26),
+) -> tuple[float, float]:
+    """Stretch goal: separate start/end temperatures (T_s, T_e), 2 parameters.
+
+    Returns (T_s, T_e) minimising NLL of softmax(s/T_s)[i] * softmax(e/T_e)[j].
+    Precomputes per-T vectors and combines via outer products, so the 2-D
+    search costs little more than the 1-D one.
+    """
+    s = np.asarray(s, dtype=np.float64)
+    e = np.asarray(e, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    rows = np.arange(s.shape[0])
+
+    def unit_vector(logits: np.ndarray, T: float, idx: np.ndarray) -> np.ndarray:
+        p = softmax_rows(logits / T)
+        return p[rows, idx]
+
+    ps_all = {T: unit_vector(s, T, np.asarray(best_i, dtype=int)) for T in grid_s}
+    pe_all = {T: unit_vector(e, T, np.asarray(best_j, dtype=int)) for T in grid_e}
+
+    best = (None, None)
+    best_loss = float("inf")
+    for ts, ps in ps_all.items():
+        for te, pe in pe_all.items():
+            p = np.clip(ps * pe, 1e-12, 1 - 1e-12)
+            loss = float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+            if loss < best_loss:
+                best, best_loss = (float(ts), float(te)), loss
+    if best[0] is None:
+        raise ValueError("Empty temperature grids")
+    return best
+
+
 def fit_temperature(
     s: np.ndarray,
     e: np.ndarray,

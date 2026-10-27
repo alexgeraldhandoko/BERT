@@ -11,9 +11,12 @@ from qa_baseline.confidence import (
     brier_skill_score,
     correctness,
     ece,
+    entropy_signal,
     fit_temperature,
+    fit_two_temperature,
     nll,
     reliability_bins,
+    renormalised_span_probability,
     risk_coverage,
     softmax_rows,
     span_margin,
@@ -125,6 +128,79 @@ class Metrics(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["em"], 1.0)  # top 2 are all correct
         self.assertAlmostEqual(rows[1]["em"], 0.5)  # full set base rate
         self.assertEqual(rows[0]["n"], 2)
+
+
+class V2Signals(unittest.TestCase):
+    def test_renormalised_probability_sums_to_one_over_legal_spans(self):
+        # THE v2 property: the renormalised scores form a distribution over
+        # legal spans, unlike the v1 raw product.
+        rng = np.random.default_rng(5)
+        L = 6
+        s, e = rng.normal(0, 2, L), rng.normal(0, 2, L)
+        mask = np.array([False, True, True, True, True, False])
+        total = 0.0
+        for a in range(L):
+            for b in range(a, L):
+                if mask[a] and mask[b]:
+                    total += renormalised_span_probability(s, e, mask, a, b)
+        self.assertAlmostEqual(total, 1.0, places=9)
+
+    def test_renormalised_temperature_flattens(self):
+        rng = np.random.default_rng(6)
+        L = 6
+        s, e = rng.normal(0, 3, L), rng.normal(0, 3, L)
+        mask = np.ones(L, dtype=bool)
+        i, j = 2, 3
+        p1 = renormalised_span_probability(s, e, mask, i, j, T=1.0)
+        p2 = renormalised_span_probability(s, e, mask, i, j, T=10.0)
+        self.assertGreater(p2, p1)  # higher T flattens towards uniform 1/n_legal
+
+    def test_entropy_lower_for_sharper_distribution(self):
+        L = 8
+        mask = np.ones(L, dtype=bool)
+        sharp_s = np.array([0.0, 0.0, 9.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        flat_s = np.zeros(L)
+        e = np.zeros(L)
+        self.assertLess(
+            entropy_signal(sharp_s, e, mask), entropy_signal(flat_s, e, mask)
+        )
+
+
+class FitTwoTemperature(unittest.TestCase):
+    def test_two_temperatures_fix_overconfident_component_and_nll_improves(self):
+        # When only ONE component is overconfident (truth = ps^0.5 * pe), the
+        # fit sharpens it (T < 1) and the OTHER component flattens (T > 1) to
+        # keep the predicted base rate matched — the two temperatures share a
+        # base-rate budget. The mirrored case must produce the mirrored
+        # cross-pattern; NLL must decrease in both.
+        rng = np.random.default_rng(21)
+        n, L = 600, 6
+        s = rng.normal(0, 4.0, size=(n, L))
+        e = rng.normal(0, 4.0, size=(n, L))
+        i, j = s.argmax(axis=1), e.argmax(axis=1)
+        ps = softmax_rows(s)[np.arange(n), i]
+        pe = softmax_rows(e)[np.arange(n), j]
+
+        def nll_at(ts, te):
+            p = np.clip(
+                softmax_rows(s / ts)[np.arange(n), i] * softmax_rows(e / te)[np.arange(n), j],
+                1e-12, 1 - 1e-12,
+            )
+            return nll(p, y)
+
+        # Case 1: start overconfident.
+        y = (rng.random(n) < np.clip(ps ** 0.5 * pe / (ps ** 0.5 * pe).mean() * 0.5, 1e-3, 0.99)).astype(float)
+        ts, te = fit_two_temperature(s, e, np.ones((n, L), bool), i, j, y)
+        self.assertLess(ts, 1.0)
+        self.assertGreater(te, 1.0)
+        self.assertLess(nll_at(ts, te), nll_at(1.0, 1.0))
+
+        # Case 2: end overconfident — mirrored pattern.
+        y = (rng.random(n) < np.clip(ps * pe ** 0.5 / (ps * pe ** 0.5).mean() * 0.5, 1e-3, 0.99)).astype(float)
+        ts, te = fit_two_temperature(s, e, np.ones((n, L), bool), i, j, y)
+        self.assertLess(te, 1.0)
+        self.assertGreater(ts, 1.0)
+        self.assertLess(nll_at(ts, te), nll_at(1.0, 1.0))
 
 
 class FitTemperature(unittest.TestCase):
