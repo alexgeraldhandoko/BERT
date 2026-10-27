@@ -1,4 +1,5 @@
 .venv/
+./paper_sources/*
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -10,3 +11,5 @@ runs/*
 results/*
 !results/README.md
 
+
+logs/
