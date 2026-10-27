@@ -30,4 +30,10 @@ PYTHONPATH=src python -m qa_baseline.predict \
   --model runs/baseline/model \
   --output runs/baseline/predictions.json
 
+# Score with the unmodified course scorer -> metrics.json (assertion 1 baseline).
+PYTHONPATH=src python -m qa_baseline.evaluate \
+  --data data/raw/dev-v1.1.json \
+  --predictions runs/baseline/predictions.json \
+  --output runs/baseline/metrics.json
+
 echo "Dev prediction finished at $(date)"

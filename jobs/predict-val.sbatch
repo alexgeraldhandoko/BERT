@@ -30,4 +30,10 @@ PYTHONPATH=src python -m qa_baseline.predict \
   --model runs/baseline/model \
   --output runs/baseline/val-predictions.json
 
+# Score with the unmodified course scorer -> val-metrics.json (assertion 1 baseline).
+PYTHONPATH=src python -m qa_baseline.evaluate \
+  --data runs/baseline/validation-v1.1.json \
+  --predictions runs/baseline/val-predictions.json \
+  --output runs/baseline/val-metrics.json
+
 echo "Validation prediction finished at $(date)"
