@@ -31,6 +31,14 @@ jobs (~15–30 min).
 Config: `configs/baseline.json` (seed 42, no `--full-train` — the 8,741 val
 rows stay out of training, per handoff decision 4).
 
+**What the cluster deliberately does NOT produce: the temperature.** The
+chained jobs stop at uncalibrated confidence (T=1). Fitting T on the val
+cache and reporting on dev are LOCAL steps (C and D below) — pure numpy on
+`scores.npz`, no GPU — kept local so that (a) dev reporting is a conscious,
+one-shot command, never an accidental sweep, and (b) matplotlib (plots) stays
+out of the pinned training env. If `calibration.json` is missing, that is
+expected until step C runs.
+
 ### Environment facts learned the hard way
 - **stujump is password-only, pass-through** ("PTY allocation failed" if you
   try a shell on it) and **blocks extra mux channels** — ControlMaster does
