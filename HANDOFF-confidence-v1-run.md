@@ -12,7 +12,7 @@ jobs (~15–30 min).
 > **UPDATE (session 2, 2026-10-28).** Training finished fine (model written
 > 22:34 SGT). **Both predict jobs crashed**, so no calibration artifacts exist
 > yet: `predict.py` passed an unbound name `max_answer_tokens` to `best_spans`
-> (`NameError`, ~1 s after a full BERT pass). Fixed in `555b1c7` along with a
+> (`NameError`, ~1 s after a full BERT pass). Fixed in `0cdc7d3` along with a
 > val/dev sidecar-name collision. Cluster HEAD was `de4ae5c` (3 commits stale).
 > Actions: `git pull` on the cluster, resubmit **both** predict jobs (no
 > retrain), then run Steps B–F. Two corrections below: the dev cache is
