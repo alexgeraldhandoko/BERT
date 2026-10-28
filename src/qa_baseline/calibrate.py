@@ -72,8 +72,12 @@ def _signal(scores: dict, name: str, T: float = 1.0) -> np.ndarray:
     """Confidence ranking signal per question, from the scores cache.
 
     prob: v1 span probability (optionally tempered). Higher = more confident.
-    neg_margin / neg_entropy: ablation signals oriented so that HIGHER =
-    more confident (margin and entropy themselves are lower = more confident).
+    margin: top1 - top2 score gap over legal spans; HIGHER = more confident, so
+        returned as-is. Negating it (as this function used to) inverts the
+        ranking, which made the targeting search report UNREACHABLE while the
+        signal's own AUC was 0.76 on val.
+    entropy: mean start/end softmax entropy; LOWER = more confident, so it is
+        negated to satisfy the "higher = confident" contract.
     """
     s, e, mask = scores["s"], scores["e"], scores["mask"]
     if name == "prob":
@@ -85,7 +89,11 @@ def _signal(scores: dict, name: str, T: float = 1.0) -> np.ndarray:
             span_margin(s[k], e[k], mask[k], int(scores["best_i"][k]), int(scores["best_j"][k]), T=T)
             for k in range(s.shape[0])
         ])
-        return -vals  # higher margin = more confident -> negate to keep 'higher = confident'
+        # span_margin already satisfies "higher = more confident"; do NOT negate.
+        # NaN means no legal span -> least confident. Unmapped, NaN sorts to the
+        # top of a descending ranking (np.argsort puts NaN last), i.e. it would
+        # be treated as the MOST confident question in the set.
+        return np.where(np.isnan(vals), -np.inf, vals)
     if name in ("entropy", "neg_entropy"):
         from .confidence import entropy_signal
 
@@ -268,25 +276,32 @@ def cmd_report(args: argparse.Namespace) -> None:
         "ECE": ece(c_cal, y), "NLL": nll(c_cal, y),
     }
 
-    # --- hard assertions (handoff section 6) ---
+    # --- gate checks (handoff section 6) ---
+    # Evaluated as data, not control flow: the table, plots and JSON are always
+    # written, then any failure is raised. A failure is NOT automatically a bug
+    # -- checks 2 and 3 legitimately fail when the calibration partition and the
+    # report partition have different gold conventions (val has 1 gold per
+    # question, dev ~3, so dev's base rate is ~10 points higher and a monotone
+    # temperature fitted on val cannot follow it).
+    failures: list[str] = []
     baseline_metrics = None
     if args.metrics is not None and args.metrics.exists():
         baseline_metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
         for key, metric_key in (("EM", "exact"), ("F1", "f1")):
             if abs(row_uncal[key] - baseline_metrics[metric_key]) > 1e-6:
-                raise AssertionError(
-                    f"Assertion 1 FAILED: {key} {row_uncal[key]} != baseline "
+                failures.append(
+                    f"Assertion 1: {key} {row_uncal[key]} != baseline "
                     f"{baseline_metrics[metric_key]} — answers changed; "
                     "suspect an offset/mask/argmax bug."
                 )
     if row_cal["NLL"] >= row_uncal["NLL"]:
-        raise AssertionError(
-            f"Assertion 2 FAILED: NLL did not decrease "
+        failures.append(
+            f"Assertion 2: NLL did not decrease "
             f"({row_uncal['NLL']:.4f} -> {row_cal['NLL']:.4f})."
         )
     if row_cal["Brier"] >= row_uncal["Brier"] or row_cal["ECE"] >= row_uncal["ECE"]:
-        raise AssertionError(
-            f"Assertion 3 FAILED: Brier/ECE did not both decrease "
+        failures.append(
+            f"Assertion 3: Brier/ECE did not both decrease "
             f"(Brier {row_uncal['Brier']:.4f} -> {row_cal['Brier']:.4f}, "
             f"ECE {row_uncal['ECE']:.4f} -> {row_cal['ECE']:.4f})."
         )
@@ -307,9 +322,12 @@ def cmd_report(args: argparse.Namespace) -> None:
         "risk_coverage_uncalibrated": risk_coverage(c_uncal, y),
         "risk_coverage_calibrated": risk_coverage(c_cal, y),
         "assertions": {
-            "em_f1_match_baseline": baseline_metrics is not None,
-            "nll_decreased": True,
-            "brier_ece_decreased": True,
+            "em_f1_match_baseline": baseline_metrics is not None and not any(
+                f.startswith("Assertion 1") for f in failures
+            ),
+            "nll_decreased": not any(f.startswith("Assertion 2") for f in failures),
+            "brier_ece_decreased": not any(f.startswith("Assertion 3") for f in failures),
+            "failures": failures,
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -318,6 +336,9 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     if args.plot_dir is not None:
         _plots(args.plot_dir, c_uncal, c_cal, y, T, row_uncal, row_cal)
+
+    if failures:
+        raise AssertionError("\n".join(failures))
 
 
 def _plots(plot_dir: Path, c_uncal, c_cal, y, T, row_uncal, row_cal) -> None:

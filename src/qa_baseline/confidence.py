@@ -70,11 +70,12 @@ def span_probability(
 def span_margin(
     s: np.ndarray, e: np.ndarray, mask: np.ndarray, i: int, j: int, T: float = 1.0
 ) -> float:
-    """top1 - top2 score gap over legal spans in the n_best grid (ablation).
+    """top1 - top2 score gap over legal spans (ablation signal).
 
-    Cheap margin signal computed over the legal (mask-true, ordered) token
-    pairs whose product probability exceeds all others; uses the same 20x20
-    grid limitation as the search (see handoff gotcha 6).
+    Legal = both positions are context tokens (`mask`) with end >= start, taken
+    over the FULL window row -- not the 20x20 n_best grid -- to share scope with
+    the v1 span probability. Higher gap = more confident. `i`/`j` are accepted
+    for signature symmetry with span_probability and otherwise unused.
     """
     s = np.asarray(s, dtype=np.float64)
     e = np.asarray(e, dtype=np.float64)
