@@ -383,7 +383,7 @@ def main() -> None:
     fit.set_defaults(func=cmd_fit)
 
     report = sub.add_parser("report", help="report calibration metrics on dev")
-    report.add_argument("--scores", type=Path, default=Path("runs/baseline/dev-scores.npz"))
+    report.add_argument("--scores", type=Path, default=Path("runs/baseline/scores.npz"))
     report.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
     report.add_argument("--predictions", type=Path, default=Path("runs/baseline/predictions.json"))
     report.add_argument("--calibration", type=Path, default=Path("runs/baseline/calibration.json"))
@@ -399,7 +399,7 @@ def main() -> None:
     target.add_argument("--val-scores", type=Path, default=Path("runs/baseline/val-scores.npz"))
     target.add_argument("--val-data", type=Path, default=Path("runs/baseline/validation-v1.1.json"))
     target.add_argument("--val-predictions", type=Path, default=Path("runs/baseline/val-predictions.json"))
-    target.add_argument("--scores", type=Path, default=Path("runs/baseline/dev-scores.npz"))
+    target.add_argument("--scores", type=Path, default=Path("runs/baseline/scores.npz"))
     target.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
     target.add_argument("--predictions", type=Path, default=Path("runs/baseline/predictions.json"))
     target.add_argument("--calibration", type=Path, default=Path("runs/baseline/calibration.json"))
