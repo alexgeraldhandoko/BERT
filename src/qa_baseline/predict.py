@@ -4,6 +4,10 @@ Writes, next to the historical {qid: str} predictions.json:
 - scores.npz: per-question logit-row cache (winning window only) so all
   downstream confidence/calibration experiments run without re-invoking BERT;
 - confidence.json: {qid: {"c": float}} uncalibrated span probability (T=1).
+
+Both sidecar names are derived from `--output` (see sidecar_paths), so the val
+and dev predict jobs -- which share runs/baseline/ -- do not overwrite each
+other's cache.
 """
 
 from __future__ import annotations
@@ -63,7 +67,7 @@ def main() -> None:
         start_logits,
         end_logits,
         config["n_best_size"],
-        max_answer_tokens,
+        config["max_answer_tokens"],
     )
 
     # Assemble the scores cache from the WINNING window of each question
@@ -108,13 +112,14 @@ def main() -> None:
             "score": span["score"],
         }
 
+    scores_path, confidence_path = sidecar_paths(args.output)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps({qid: span["text"] for qid, span in spans.items()}, indent=2) + "\n",
         encoding="utf-8",
     )
     np.savez_compressed(
-        args.output.parent / "scores.npz",
+        scores_path,
         qid=np.array(qids, dtype="<U24"),
         s=s_cache,
         e=e_cache,
@@ -123,12 +128,35 @@ def main() -> None:
         best_j=best_j,
         n_windows=n_windows,
     )
-    (args.output.parent / "confidence.json").write_text(
+    confidence_path.write_text(
         json.dumps(confidence, indent=2) + "\n", encoding="utf-8"
     )
     print(
         f"Wrote {len(spans)} answers to {args.output} "
-        f"(+ scores.npz, confidence.json in {args.output.parent})"
+        f"(+ {scores_path.name}, {confidence_path.name} in {args.output.parent})"
+    )
+
+
+def sidecar_paths(output: Path) -> tuple[Path, Path]:
+    """Return (scores.npz, confidence.json) paths for a given --output.
+
+    Names derive from the predictions file name rather than being fixed, so the
+    val and dev predict jobs -- which both write into runs/baseline/ -- land in
+    separate files instead of silently overwriting each other (HANDOFF gotcha:
+    fit T on the VALIDATION partition, report on dev). Conventions:
+        predictions.json      -> scores.npz,      confidence.json
+        val-predictions.json  -> val-scores.npz,  val-confidence.json
+    """
+    stem = output.stem
+    if stem == "predictions":
+        prefix = ""
+    elif stem.endswith("-predictions"):
+        prefix = f"{stem[: -len('-predictions')]}-"
+    else:
+        prefix = f"{stem}-"
+    return (
+        output.parent / f"{prefix}scores.npz",
+        output.parent / f"{prefix}confidence.json",
     )
 
 

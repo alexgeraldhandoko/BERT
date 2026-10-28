@@ -9,6 +9,15 @@ Author state: written while job `1026139` was at 21% (epoch 1/3, ~8 it/s).
 Started 2026-10-27 ~19:55 SGT; ETA ~3 h for training, then two chained predict
 jobs (~15–30 min).
 
+> **UPDATE (session 2, 2026-10-28).** Training finished fine (model written
+> 22:34 SGT). **Both predict jobs crashed**, so no calibration artifacts exist
+> yet: `predict.py` passed an unbound name `max_answer_tokens` to `best_spans`
+> (`NameError`, ~1 s after a full BERT pass). Fixed in `555b1c7` along with a
+> val/dev sidecar-name collision. Cluster HEAD was `de4ae5c` (3 commits stale).
+> Actions: `git pull` on the cluster, resubmit **both** predict jobs (no
+> retrain), then run Steps B–F. Two corrections below: the dev cache is
+> `scores.npz`, never `dev-scores.npz`.
+
 ---
 
 ## 1. Where everything stands
@@ -93,7 +102,7 @@ one-shot (handoff gotcha 10).
 ### Step D — report on dev (local; 3 hard assertions run automatically)
 ```bash
 PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate report \
-  --scores runs/baseline/dev-scores.npz \
+  --scores runs/baseline/scores.npz \
   --data data/raw/dev-v1.1.json \
   --predictions runs/baseline/predictions.json \
   --calibration runs/baseline/calibration.json \
@@ -118,7 +127,7 @@ PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate target \
   --val-scores runs/baseline/val-scores.npz \
   --val-data runs/baseline/validation-v1.1.json \
   --val-predictions runs/baseline/val-predictions.json \
-  --scores runs/baseline/dev-scores.npz \
+  --scores runs/baseline/scores.npz \
   --data data/raw/dev-v1.1.json \
   --predictions runs/baseline/predictions.json \
   --calibration runs/baseline/calibration.json \
