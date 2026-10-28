@@ -110,7 +110,8 @@ The diagnostic that isolates this — **computed for diagnosis only, never
 reported as the method, since it fits on dev**:
 
 ```
-T* fitted on dev            = 0.7100      (vs 1.0200 on val)
+T* fitted on dev (NLL)     = 0.7100      (vs 1.0200 on val)
+T  minimising Brier on dev = 0.6000
 dev with T* (diagnostic)    Brier 0.1342  ECE 0.0718  NLL 0.4158
 ```
 
@@ -121,6 +122,52 @@ assumed. Consequence for the write-up: **temperature scaling transfers only when
 the base rate transfers**, so a calibrator must be fitted on a held-out sample
 drawn from the *target* distribution's gold convention (or absorb the shift with
 a bias term, which is Platt/v2, not pure T).
+
+### 3.3 Why `T ≈ 1` on val: val is already calibrated
+
+| partition | base | mean_c | ECE | BSS | AUC |
+|---|---|---|---|---|---|
+| val | 0.6995 | 0.6754 | **0.0454** | **+0.2240** | 0.800 |
+| dev | 0.7960 | 0.6503 | **0.1457** | +0.0617 | 0.829 |
+
+The same signal is nearly calibrated on val (ECE 0.045, `mean_c` within 2.4
+points of base) and badly deflated on dev (−14.6 points). Calibration is
+therefore a property of the **signal × distribution** pair, not of the signal
+alone, and a temperature fitted on val is correctly ≈ identity there.
+
+Note also that dev's *ranking* is **better** than val's (AUC 0.829 vs 0.800) and
+its *Brier* is better (0.1523 vs 0.1631), yet its BSS is much worse (+0.062 vs
++0.224), because BSS is normalised by `base(1−base)` which is only 0.1624 at
+dev's 0.796 base rate. A signal near the base rate earns little credit, so the
+level error is punished twice. BSS must be read next to AUC and risk–coverage.
+
+### 3.4 What a calibrator could achieve (headroom, measured)
+
+Same dev data, different calibrators. Rows marked ORACLE are fitted on dev and
+are **diagnostics only** — they are not a proposed method (gotcha 10):
+
+| calibrator | fitted on | dev Brier | dev BSS | dev ECE |
+|---|---|---|---|---|
+| uncalibrated | — | 0.1523 | +0.062 | 0.1457 |
+| T = 1.02 (**the shipped transfer**) | val | 0.1543 | +0.050 | 0.1522 |
+| T = 0.60 | dev (ORACLE) | 0.1327 | +0.183 | 0.0593 |
+| Platt `a·logit+b`, a=0.767 b=+0.249 | **val** | **0.1391** | **+0.143** | 0.1171 |
+| Platt `a·logit+b`, a=0.955 b=+1.043 | dev (ORACLE) | 0.1213 | +0.253 | 0.0144 |
+| floor `base(1−base)` | — | 0.1624 | 0.000 | — |
+
+Three readings:
+
+1. Temperature scaling is **not** inert — fitted on the target distribution it
+   moves dev Brier 0.1523 → 0.1327 and BSS +0.062 → +0.183. It is the *transfer*
+   from val that fails, not the method.
+2. A **2-parameter** map on the logit does transfer partially: Platt fitted on
+   val reaches dev Brier 0.1391, roughly half of the gap to the oracle. Its bias
+   term absorbs part of the 9.7-point base-rate shift that a pure scaling cannot.
+   The residual 0.1391 → 0.1213 is what genuinely requires labels from the target
+   convention.
+3. Uncalibrated Brier 0.1523 is only 6% below the trivial floor; oracle Platt is
+   25% below it. **Most of the headroom is level, not ranking** — which is the
+   direct motivation for v2 renormalisation.
 
 ---
 
@@ -211,13 +258,18 @@ any artifact was written.
 
 Established:
 
-- The model's own span probability is **informative** (BSS +0.062; 95 EM at 50%
-  coverage; 25% coverage at 1.87% error against a 5% target). It is worth
-  emitting.
-- It is **not calibrated in level** (−14.6 points on dev) — the v2
-  renormalisation hypothesis is therefore supported, but see the next point.
-- A **single global temperature is the wrong tool** for a cross-convention
-  transfer. Fitted on val it is ≈ no-op on val and actively harmful on dev.
+- The model's own span probability is **informative on rank** (AUC 0.829 on dev,
+  95 EM at 50% coverage, 25% coverage at 1.87% error). It is worth emitting.
+- Its *level* is wrong on dev (−14.6 points, ECE 0.146) while being right on val
+  (ECE 0.045): calibration is pair-specific, not a property of the signal.
+- A single global temperature is the **wrong tool for a cross-convention
+  transfer**. Fitted on val it is ≈ no-op on val and harmful on dev. On the
+  target distribution itself it works (Brier 0.1523 → 0.1327).
+- A 2-parameter affine map (Platt) transfers **partially** from val
+  (Brier 0.1391); the remainder needs labels from the target convention.
+- Most of the remaining headroom is level, not ranking (uncalibrated is 6% below
+  the trivial Brier floor; oracle Platt is 25% below), which is the argument for
+  v2.
 
 Next, in order of expected value:
 
@@ -225,9 +277,9 @@ Next, in order of expected value:
    implemented and tested, not yet wired into `report`). Predicted to fix the
    *level* error, which temperature cannot. Compare ECE/Brier on dev against
    §3's numbers.
-2. **Base-rate-aware calibration** — Platt (`a·logit + b`) or a per-partition
-   bias term, fitted on a held-out sample from the target convention. §3.2's
-   diagnostic (`T* = 0.71` on dev) bounds the gain: Brier 0.1523 → 0.1342.
+2. **Base-rate-aware calibration** — Platt (`a·logit + b`, measured above at dev
+   Brier 0.1391 from a val fit) or a per-partition bias term fitted on a
+   held-out sample from the target convention (oracle 0.1213).
 3. Keep the **error-rate targeting** table as the headline for the report: it is
    rank-based, so it survives base-rate shifts, and it is the one capability a
    ranking-only score cannot provide.
