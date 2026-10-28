@@ -174,6 +174,6 @@ baseline **val EM 69.73 / dev EM 79.66**, base(1−base) Brier floor.
 - [x] `confidence.py` + 22 unit tests
 - [x] `calibrate.py fit` → calibration.json from the validation partition (code done; run in step C)
 - [x] `calibrate.py report` → table + plots + assertions (code done; run in step D)
-- [ ] half-split T check recorded (step C/D output → results file)
-- [ ] `results/2026-10-27-confidence-v1.md` (step F)
+- [x] half-split T check recorded (step C/D output → results file) — Δ=0.02, in `calibration.json` and both results docs
+- [x] `results/2026-10-27-confidence-v1.md` (step F) — written in session 2 (`a908d51`), plus plain-language companion `2026-10-28-temperature-findings.md`. Note: report checks 2/3 failed legitimately (base-rate transfer); see the results doc §3.2–3.4.
 - [x] stretch: margin/entropy signals; separate T_s/T_e; error-rate targeting
