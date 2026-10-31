@@ -15,12 +15,12 @@ CANDIDATES = [
     ("q2", 1, 2, 0, 3.0), ("q2", 2, 2, 0, 2.0),
     ("q3", 1, 3, 1, 6.0), ("q3", 2, 4, 0, 1.0),
 ]
-SPLIT = {"head_train": ["q0", "q1"], "calib": ["q2"], "test": ["q3"]}
+SPLIT = {"head_train": ["q0", "q1"], "calib": ["q2"], "test": ["q3", "q4"]}  # q4 has no candidates
 
 
 def write_export(folder, candidates=CANDIDATES, split=SPLIT, pooled_rows=None):
     folder = Path(folder)
-    qids = ["q0", "q1", "q2", "q3"]
+    qids = ["q0", "q1", "q2", "q3", "q4"]
     (folder / "questions.json").write_text(json.dumps([{"id": q} for q in qids]), encoding="utf-8")
     with (folder / "candidates.jsonl").open("w", encoding="utf-8") as stream:
         for qid, rank, window, em, score in candidates:
@@ -73,7 +73,10 @@ class CandidateTableChecks(unittest.TestCase):
         self.assertAlmostEqual(result["head_train"]["em@1"], 50.0)   # q0 right, q1 wrong
         self.assertAlmostEqual(result["head_train"]["em@3"], 100.0)  # q1's answer is rank 2
         self.assertAlmostEqual(result["calib"]["em@3"], 0.0)
-        self.assertAlmostEqual(result["test"]["em@1"], 100.0)
+        self.assertAlmostEqual(result["test"]["em@1"], 50.0)         # q3 right, q4 has no candidates
+        self.assertEqual(result["test"]["questions"], 2)
+        self.assertEqual(result["test"]["no_candidates"], 1)
+        self.assertEqual(result["head_train"]["no_candidates"], 0)
         self.assertEqual(result["head_train"]["candidates"], 6)
 
     def test_vectors_follow_row_and_window(self):
@@ -91,13 +94,13 @@ class CandidateTableChecks(unittest.TestCase):
             build_table(self.folder, self.split_path)
 
     def test_question_missing_from_split_is_rejected(self):
-        bad = {"head_train": ["q0", "q1"], "calib": ["q2"], "test": []}
+        bad = {"head_train": ["q0", "q1"], "calib": ["q2"], "test": ["q4"]}
         path = write_export(self.folder, split=bad)
         with self.assertRaises(ValueError):
             build_table(self.folder, path)
 
     def test_question_in_two_parts_is_rejected(self):
-        bad = {"head_train": ["q0", "q1"], "calib": ["q2", "q0"], "test": ["q3"]}
+        bad = {"head_train": ["q0", "q1"], "calib": ["q2", "q0"], "test": ["q3", "q4"]}
         path = write_export(self.folder, split=bad)
         with self.assertRaises(ValueError):
             build_table(self.folder, path)

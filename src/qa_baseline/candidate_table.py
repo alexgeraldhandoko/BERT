@@ -90,6 +90,7 @@ def build_table(exports_dir, split_path):
         "scalars": scalars,
         "scalar_names": np.array(SCALAR_NAMES),
         "num_questions": np.array(len(questions)),
+        "question_part": np.array([part_of[question["id"]] for question in questions], dtype=np.int8),
     }
     
     
@@ -109,9 +110,11 @@ def summarize(table, ks=(1, 5, 20)):
     result = {}
     for number, name in enumerate(PARTS):
         in_part = table["part"] == number
-        questions = np.unique(table["q_index"][in_part])
+        questions = np.where(table["question_part"] == number)[0]  # every question in the part
+        with_candidates = len(np.unique(table["q_index"][in_part]))
         entry = {
             "questions": len(questions),
+            "no_candidates": len(questions) - with_candidates,
             "candidates": int(in_part.sum()),
             "positive_rate": float(table["em"][in_part].mean()),
         }
@@ -136,7 +139,8 @@ def main() -> None:
     table = build_table(args.exports, args.split)
     for name, entry in summarize(table).items():
         print(
-            f"{name:10s} {entry['questions']:5d} questions {entry['candidates']:7d} candidates  "
+            f"{name:10s} {entry['questions']:5d} questions ({entry['no_candidates']} without candidates) "
+            f"{entry['candidates']:7d} candidates  "
             f"correct {100 * entry['positive_rate']:.1f}%  "
             f"rank-1 EM {entry['em@1']:.2f} F1 {entry['f1@1']:.2f}  "
             f"oracle@5 EM {entry['em@5']:.2f}  oracle@20 EM {entry['em@20']:.2f}"
