@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from qa_baseline.candidate_table import SCALAR_NAMES
-from qa_baseline.cv_rerank import assign_folds, mixed_scores, run_cv
+from qa_baseline.cv_rerank import assign_folds, group_softmax, mixed_scores, run_cv
 from qa_baseline.span_head import group_layout
 
 
@@ -54,6 +54,17 @@ class CvChecks(unittest.TestCase):
         self.assertLessEqual(counts.max() - counts.min(), 8)
         np.testing.assert_array_equal(folds, assign_folds(titles, 5))
 
+    def test_group_softmax_sums_to_one_and_alpha_extremes_pick_baseline_or_head(self):
+        starts, sizes = group_layout([0, 0, 0, 1, 1])
+        base = np.array([3.0, 1.0, 0.0, 0.0, 2.0])
+        head = np.array([0.0, 5.0, 1.0, 4.0, 0.0])
+        p = group_softmax(base, starts, sizes)
+        self.assertAlmostEqual(p[:3].sum(), 1.0)
+        self.assertAlmostEqual(p[3:].sum(), 1.0)
+        pick = lambda s: [int(np.argmax(s[a:a + n])) for a, n in zip(starts, sizes)]
+        self.assertEqual(pick(mixed_scores(base, head, 0.0, starts, sizes)), [0, 1])
+        self.assertEqual(pick(mixed_scores(base, head, 1.0, starts, sizes)), [1, 0])
+
     def test_every_question_is_scored_once_and_a_hidden_signal_is_found(self):
         table, pooled, h_cls, titles = synthetic()
         result = run_cv(table, pooled, h_cls, titles, configs=("scalars+span",),
@@ -68,18 +79,11 @@ class CvChecks(unittest.TestCase):
         self.assertTrue(report["scalars+span"]["adopt"])
         self.assertEqual(report["scalars+span"]["folds_improved_em"], 5)
         self.assertFalse(report["length penalty"]["adopt"])    # no length signal in this data
+        pair = result["pairs"]["scalars+span + mix vs length penalty"]
+        self.assertGreater(pair["d_em"][1], 0)                 # the span head beats the penalty, interval above 0
+        self.assertEqual(pair["folds_em"], 5)
+        self.assertEqual(result["outcomes"]["em"]["baseline"].shape[0], len(titles))
 
-
-    def test_mixed_scores_endpoints(self):
-        base = np.array([3.0, 1.0])
-        head = np.array([1.0, 3.0])
-
-        np.testing.assert_allclose(mixed_scores(base, head, 1.0), base)
-        np.testing.assert_allclose(mixed_scores(base, head, 0.0), head)
-        np.testing.assert_allclose(
-            mixed_scores(base, head, 0.25),
-            0.25 * base + 0.75 * head,
-        )
 
 if __name__ == "__main__":
     unittest.main()
