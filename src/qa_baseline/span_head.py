@@ -1,28 +1,25 @@
-"""Train linear head that rescored the top-K candidates of each question.
- 
+"""Listwise linear head that rescored the top-K candidates of each question (numpy only).
+
 Trains on the head_train part, picks the L2 strength and stopping step on the calib part, and
 reports how often the head's top pick is an exact match. The test part is never touched here.
- 
+
   PYTHONPATH=src python -m qa_baseline.span_head \
       --exports exports/v1/heldout --table exports/v1/heldout/table.npz --output-dir exports/v1/heldout/heads
 """
- 
+
 from __future__ import annotations
- 
+
 import argparse
 from pathlib import Path
- 
+
 import numpy as np
- 
+
 from .candidate_table import PARTS, load_table
- 
+
 CONFIGS = ("scalars", "scalars+span")
-# "scalars+span+cls" is supported but not run by default: h_cls is identical for every candidate of a
-# window, so a linear head ranking candidates inside one question gets nothing from it.
- 
- 
+
 def group_layout(q_index):
-    """Finds start offsets and sizes of each question's rows (rows of one question must be contiguous)."""
+    """Start offsets and sizes of each question's rows (rows of one question must be contiguous)."""
     q = np.asarray(q_index)
     starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
     if len(np.unique(q)) != len(starts):
@@ -31,9 +28,9 @@ def group_layout(q_index):
 
 
 def listwise_loss_and_grad(scores, correct, starts, sizes):
-    """Calculates log(probability mass on correct candidates), averaged over questions that have one.
- 
-    Several correct rows per question: any of them counts. Returns (loss, d loss / d scores)."""
+    """-log(probability mass on correct candidates), averaged over questions that have one.
+
+    Several correct rows per question are fine: any of them counts. Returns (loss, d loss / d scores)."""
     scores = np.asarray(scores, dtype=np.float64)
     shift = np.repeat(np.maximum.reduceat(scores, starts), sizes)
     e = np.exp(scores - shift)
@@ -49,26 +46,25 @@ def listwise_loss_and_grad(scores, correct, starts, sizes):
 
 
 def top1_metrics(scores, em, f1, starts, sizes, n_questions):
-    """Calculates EM and F1 of each question's best-scoring candidate; ties pick the earlier row.
- 
+    """EM and F1 (percent) of each question's best-scoring candidate; ties pick the earlier row.
+
     n_questions counts every question in the part, including those with no candidates (scored 0)."""
     chosen = np.array([s + int(np.argmax(scores[s : s + n])) for s, n in zip(starts, sizes)])
     return 100 * float(em[chosen].sum()) / n_questions, 100 * float(f1[chosen].sum()) / n_questions
-
 
 
 def standardizer(X):
     mean, std = X.mean(axis=0), X.std(axis=0)
     std[std < 1e-6] = 1.0
     return mean.astype(np.float32), std.astype(np.float32)
- 
- 
+
+
 def standardize(X, mean, std):
     return np.clip((X - mean) / std, -10, 10).astype(np.float32)
 
 
 def train_listwise(X, correct, groups, X_val, correct_val, groups_val, l2, steps, lr, eval_every=25):
-    """Uses Adam on the listwise loss. Keeps the weights with the lowest validation loss."""
+    """Adam on the listwise loss. Keeps the weights with the lowest validation loss."""
     d = X.shape[1]
     w = np.zeros(d, dtype=np.float32)  # all-zero scores tie, so the start point is the baseline's rank-1 pick
     m, v = np.zeros(d), np.zeros(d)
@@ -87,14 +83,21 @@ def train_listwise(X, correct, groups, X_val, correct_val, groups_val, l2, steps
 
 
 def features(table, rows, config, pooled, h_cls):
+    """Scalars always; then text (boundary flags), span (pooled vector) and cls blocks as named in config."""
+    parts = config.split("+")
+    unknown = set(parts) - {"scalars", "text", "span", "cls"}
+    if parts[0] != "scalars" or unknown:
+        raise ValueError(f"Unknown feature config {config!r}")
     blocks = [table["scalars"][rows]]
-    if config in ("scalars+span", "scalars+span+cls"):
+    if "text" in parts:
+        blocks.append(np.asarray(table["text"][rows], dtype=np.float32))
+    if "span" in parts:
         blocks.append(np.asarray(pooled[rows], dtype=np.float32))
-    if config == "scalars+span+cls":
+    if "cls" in parts:
         blocks.append(np.asarray(h_cls[table["window"][rows]], dtype=np.float32))
     return np.concatenate(blocks, axis=1)
- 
- 
+
+
 def part_layout(table, number):
     rows = np.where(table["part"] == number)[0]
     return rows, group_layout(table["q_index"][rows]), int((table["question_part"] == number).sum())
@@ -110,7 +113,7 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=400)
     parser.add_argument("--lr", type=float, default=0.02)
     args = parser.parse_args()
- 
+
     table = load_table(args.table)
     pooled = np.load(args.exports / "span_pooled.npy", mmap_mode="r")
     h_cls = np.load(args.exports / "windows.npz")["h_cls"]
@@ -118,14 +121,13 @@ def main() -> None:
     calib_rows, calib_groups, calib_questions = part_layout(table, PARTS.index("calib"))
     correct_train = table["em"][train_rows].astype(np.float64)
     correct_calib = table["em"][calib_rows].astype(np.float64)
- 
-    # Reports the baseline rabk-1 EM/F1 on calib
+
     base_em, base_f1 = top1_metrics(
         -table["rank"][calib_rows].astype(np.float64), table["em"][calib_rows], table["f1"][calib_rows],
         *calib_groups, calib_questions,
     )
     print(f"baseline (rank 1) on calib: EM {base_em:.2f}  F1 {base_f1:.2f}")
- 
+
     for config in args.configs.split(","):
         X_train = features(table, train_rows, config, pooled, h_cls)
         mean, std = standardizer(X_train)
@@ -147,7 +149,7 @@ def main() -> None:
         if args.output_dir:
             args.output_dir.mkdir(parents=True, exist_ok=True)
             np.savez(args.output_dir / f"head_{config}.npz", w=w, mean=mean, std=std, l2=l2, step=step)
- 
- 
+
+
 if __name__ == "__main__":
     main()

@@ -28,7 +28,10 @@ def synthetic(n_articles=20, per_article=6, k=6, dim=8, seed=0):
     scalars[:, names.index("score")] = [r[2] for r in rows]
     scalars[:, names.index("span_tokens")] = [r[3] for r in rows]
     scalars[:, names.index("rank")] = [r[1] for r in rows]
+    text = rng.normal(0, 1, (n, 4)).astype(np.float32)
+    text[:, 0] += 2.0 * np.array([r[4] for r in rows])      # an informative text feature
     table = {
+        "text": text,
         "q_index": np.array([r[0] for r in rows], dtype=np.int32),
         "rank": np.array([r[1] for r in rows], dtype=np.int16),
         "em": np.array([r[4] for r in rows], dtype=np.int8),
@@ -83,6 +86,14 @@ class CvChecks(unittest.TestCase):
         self.assertGreater(pair["d_em"][1], 0)                 # the span head beats the penalty, interval above 0
         self.assertEqual(pair["folds_em"], 5)
         self.assertEqual(result["outcomes"]["em"]["baseline"].shape[0], len(titles))
+
+    def test_text_feature_variant_runs_and_finds_its_signal(self):
+        table, pooled, h_cls, titles = synthetic()
+        result = run_cv(table, pooled, h_cls, titles, configs=("scalars+text",),
+                        l2_grids={"scalars+text": (0.1,)}, steps=150, lr=0.05)
+        self.assertTrue(result["scored_once"])
+        self.assertGreater(result["report"]["scalars+text"]["em"], 60)
+        self.assertIn("scalars+text + mix vs length penalty", result["pairs"])
 
 
 if __name__ == "__main__":

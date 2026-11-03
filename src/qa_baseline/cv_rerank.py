@@ -32,12 +32,17 @@ from .span_head import features, group_layout, standardize, standardizer, train_
 
 LAMBDA_GRID = tuple(round(0.01 * i, 2) for i in range(31))
 ALPHA_GRID = tuple(round(0.1 * i, 1) for i in range(11))
-DEFAULT_L2 = {"scalars": (0.0001, 0.001, 0.01), "scalars+span": (0.03, 0.1, 0.3)}
+DEFAULT_L2 = {"scalars": (0.0001, 0.001, 0.01), "scalars+span": (0.03, 0.1, 0.3),
+              "scalars+text": (0.001, 0.01, 0.1), "scalars+text+span": (0.03, 0.1, 0.3)}
 # Pairs compared head to head. Added AFTER the first cross-validation run, so they are post hoc.
 PAIRS = (
     ("scalars+span + mix", "scalars + mix"),
     ("scalars+span + mix", "length penalty"),
     ("scalars + mix", "length penalty"),
+    ("scalars+text + mix", "length penalty"),
+    ("scalars+text + mix", "scalars + mix"),
+    ("scalars+text+span + mix", "scalars+text + mix"),
+    ("scalars+text+span + mix", "scalars+span + mix"),
 )
 
 
@@ -197,7 +202,9 @@ def main() -> None:
     parser.add_argument("--validation", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--configs", default="scalars,scalars+span")
+    parser.add_argument("--text-features", type=Path, default=None, help="text_features.npz (needed for +text configs)")
     parser.add_argument("--l2-scalars", default=None, help="comma-separated L2 grid for the scalar head")
+    parser.add_argument("--l2-text", default=None, help="comma-separated L2 grid for scalars+text")
     parser.add_argument("--l2-span", default=None, help="comma-separated L2 grid for the scalars+span head")
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--steps", type=int, default=1000)
@@ -214,6 +221,11 @@ def main() -> None:
         grids["scalars"] = tuple(float(v) for v in args.l2_scalars.split(","))
     if args.l2_span:
         grids["scalars+span"] = tuple(float(v) for v in args.l2_span.split(","))
+    if args.l2_text:
+        grids["scalars+text"] = tuple(float(v) for v in args.l2_text.split(","))
+    if args.text_features:
+        from .text_features import load_text_features
+        table["text"] = load_text_features(args.text_features, len(table["q_index"]))
     result = run_cv(table, pooled, h_cls, [titles[i] for i in ids], tuple(args.configs.split(",")),
                     args.folds, l2_grids=grids, steps=args.steps, lr=args.lr)
 
