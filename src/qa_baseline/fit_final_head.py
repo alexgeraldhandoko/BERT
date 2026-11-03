@@ -13,6 +13,7 @@ from .span_head import (
     standardize,
     standardizer,
 )
+from .text_features import load_text_features
 
 
 def train_fixed(X, correct, groups, l2, steps, lr):
@@ -43,15 +44,29 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=250)
     parser.add_argument("--lr", type=float, default=0.02)
     parser.add_argument("--alpha", type=float, default=0.55)
+    parser.add_argument(
+        "--config",
+        choices=("scalars", "scalars+span", "scalars+text", "scalars+text+span"),
+        default="scalars+span",
+    )
+    parser.add_argument("--text-features", type=Path, default=None)
     args = parser.parse_args()
 
     table = load_table(args.table)
+    if "text" in args.config.split("+"):
+        if args.text_features is None:
+            parser.error("--text-features is required when --config includes text")
+        table["text"] = load_text_features(
+            args.text_features, expected_rows=len(table["q_index"])
+        )
+    elif args.text_features is not None:
+        parser.error("--text-features is only used by configurations that include text")
     rows = np.arange(len(table["em"]), dtype=np.int64)
 
     pooled = np.load(args.exports / "span_pooled.npy", mmap_mode="r")
     h_cls = np.load(args.exports / "windows.npz")["h_cls"]
 
-    X_raw = features(table, rows, "scalars+span", pooled, h_cls)
+    X_raw = features(table, rows, args.config, pooled, h_cls)
     mean, std = standardizer(X_raw)
     X = standardize(X_raw, mean, std)
     del X_raw
@@ -67,7 +82,7 @@ def main() -> None:
         w=w,
         mean=mean,
         std=std,
-        config=np.array("scalars+span"),
+        config=np.array(args.config),
         l2=np.float32(args.l2),
         step=np.int32(args.steps),
         lr=np.float32(args.lr),
@@ -76,7 +91,7 @@ def main() -> None:
 
     print(f"candidate rows: {len(rows)}")
     print(f"questions represented by candidates: {len(np.unique(table['q_index'][rows]))}")
-    print(f"config=scalars+span l2={args.l2} steps={args.steps} alpha={args.alpha}")
+    print(f"config={args.config} l2={args.l2} steps={args.steps} alpha={args.alpha}")
     print(f"final training loss: {final_loss:.6f}")
     print(f"saved: {args.output}")
 
