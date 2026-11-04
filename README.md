@@ -63,6 +63,49 @@ PYTHONPATH=src python -m qa_baseline.evaluate \
 
 `runs/` and the raw datasets are not committed. Record final numbers, config, seed, commit, package versions, hardware, and commands in a short file under `results/`. Do not claim a baseline EM/F1 score until training and evaluation have actually run.
 
+## Kamath-style confidence baseline (this branch)
+
+This experiment **does not fine-tune BERT again**. It runs the existing QA checkpoint, fits a separate random forest to predict whether BERT's final answer is exactly correct, and compares its confidence with raw start/end softmax confidence. It follows the seven-feature idea in [Kamath et al. (2020)](https://aclanthology.org/2020.acl-main.503/), adapted to this repository's cross-window span selector. The paper evaluated selective QA under domain shift; this branch evaluates SQuAD 1.1 confidence calibration.
+
+Run these commands from the repository root on the SoC cluster after installing `requirements.txt` and placing the course SQuAD JSON files in `data/raw/`. Run BERT inference in a Slurm compute allocation, not on a login node. The 416 MB checkpoint stays at `/home/e/e1398508/baseline-model-v1`; it is never copied into this repo.
+
+First, **confirm with the teammate's training record that this checkpoint was trained on the complementary 90% split**, using the same train file, seed 42, and article-level split. If the checkpoint was trained on all questions, these held-out questions are not valid forest-training data.
+
+```bash
+PYTHONPATH=src python -m qa_baseline.kamath prepare-validation \
+  --data data/raw/train-v1.1.json \
+  --output runs/kamath/validation-v1.1.json
+
+PYTHONPATH=src python -m qa_baseline.kamath collect \
+  --data runs/kamath/validation-v1.1.json \
+  --model /home/e/e1398508/baseline-model-v1 \
+  --role calibration \
+  --output runs/kamath/calibration-records.json
+
+PYTHONPATH=src python -m qa_baseline.kamath fit \
+  --records runs/kamath/calibration-records.json \
+  --output runs/kamath/forest.joblib
+
+PYTHONPATH=src python -m qa_baseline.kamath collect \
+  --data data/raw/dev-v1.1.json \
+  --model /home/e/e1398508/baseline-model-v1 \
+  --role evaluation \
+  --output runs/kamath/dev-records.json
+
+PYTHONPATH=src python -m qa_baseline.kamath evaluate \
+  --records runs/kamath/dev-records.json \
+  --data data/raw/dev-v1.1.json \
+  --forest runs/kamath/forest.joblib \
+  --output runs/kamath/evaluation \
+  --summary results/kamath-summary.json
+```
+
+The seven forest columns, in fixed order, are passage word count, predicted answer word count, and the five largest candidate-span probabilities. Each span probability is the product of start and end softmax probabilities within its window. Duplicate character spans across overlapping windows count once; absent candidates are filled with zero. The **raw softmax** comparator is the start/end product for the span selected by the baseline's highest start-plus-end logit score across windows. These cross-window products are not a single normalized distribution.
+
+The forest is fitted only on the held-out training questions. `evaluate` checks that dev records came from the same BERT checkpoint and a different SQuAD file, writes question-level confidence values and the unchanged BERT predictions under `runs/kamath/evaluation/`, and writes a small, Git-trackable metrics file to `results/kamath-summary.json`. ECE uses 10 equal-width bins; EM/F1 come from the official scorer. The train held-out split has one gold answer per question while dev often has several, so interpret cross-split calibration differences with that labeling difference in mind.
+
+After the cluster run, copy `results/kamath-summary.json` back to the same path in the local checkout, along with any detailed `runs/kamath/evaluation/` files you need for analysis. Commit the source changes and summary; keep the BERT checkpoint, forest file, raw datasets, and large prediction files outside Git. Record `python -m pip freeze`, the Git commit, Slurm job/hardware, and checkpoint SHA-256 in the experiment notes.
+
 ## Branches
 
 1. First run and review the baseline, then commit and tag that working state as `baseline-v1`.

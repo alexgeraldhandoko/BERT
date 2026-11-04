@@ -9,4 +9,5 @@ runs/*
 !runs/.gitkeep
 results/*
 !results/README.md
+!results/kamath-summary.json
 

@@ -11,22 +11,13 @@ from .features import prediction_features
 from .postprocess import best_answers
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path("configs/baseline.json"))
-    parser.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
-    parser.add_argument("--model", type=Path, default=Path("runs/baseline/model"))
-    parser.add_argument("--output", type=Path, default=Path("runs/baseline/predictions.json"))
-    args = parser.parse_args()
-
+def run_inference(examples, config, model_path: Path, cache_path: Path):
+    """Return window features and start/end logits for downstream experiments."""
     from datasets import Dataset
     from transformers import AutoModelForQuestionAnswering, AutoTokenizer, Trainer, TrainingArguments
 
-    config = json.loads(args.config.read_text(encoding="utf-8"))
-    examples = load_squad(args.data)
-    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
-    model = AutoModelForQuestionAnswering.from_pretrained(args.model)
-
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+    model = AutoModelForQuestionAnswering.from_pretrained(model_path)
     raw = Dataset.from_list(examples)
     features = raw.map(
         lambda batch: prediction_features(
@@ -39,15 +30,31 @@ def main() -> None:
     trainer = Trainer(
         model=model,
         args=TrainingArguments(
-            output_dir=str(args.output.parent / "prediction_cache"),
+            output_dir=str(cache_path),
             per_device_eval_batch_size=config["eval_batch_size"],
             report_to="none",
         ),
     )
     start_logits, end_logits = trainer.predict(model_features).predictions
+    return features.to_list(), start_logits, end_logits
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=Path("configs/baseline.json"))
+    parser.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
+    parser.add_argument("--model", type=Path, default=Path("runs/baseline/model"))
+    parser.add_argument("--output", type=Path, default=Path("runs/baseline/predictions.json"))
+    args = parser.parse_args()
+
+    config = json.loads(args.config.read_text(encoding="utf-8"))
+    examples = load_squad(args.data)
+    features, start_logits, end_logits = run_inference(
+        examples, config, args.model, args.output.parent / "prediction_cache"
+    )
     answers = best_answers(
         examples,
-        features.to_list(),
+        features,
         start_logits,
         end_logits,
         config["n_best_size"],
