@@ -111,6 +111,8 @@ def summarize(table, ks=(1, 5, 20)):
     for number, name in enumerate(PARTS):
         in_part = table["part"] == number
         questions = np.where(table["question_part"] == number)[0]  # every question in the part
+        if len(questions) == 0:
+            continue
         with_candidates = len(np.unique(table["q_index"][in_part]))
         entry = {
             "questions": len(questions),

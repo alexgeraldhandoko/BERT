@@ -1,24 +1,32 @@
-"""Break down the baseline's fixable errors by how the wrong rank-1 span differs from the correct candidate.
+"""Turn the candidate export into one table row per candidate, with labels and split parts.
 
-A fixable error is a question whose rank-1 answer is not an exact match but whose top-K candidates
-contain one. Spans are compared after the official normalization (lowercase, no punctuation or articles).
+  PYTHONPATH=src python -m qa_baseline.candidate_table \
+      --exports exports/v1/heldout --split splits/heldout-v1.json \
+      --output exports/v1/heldout/table.npz
 
-  PYTHONPATH=src python -m qa_baseline.boundary_report --exports exports/v1/heldout
+Row i of the table is row i of candidates.jsonl and row i of span_pooled.npy. Vectors are not
+copied into the table; vectors_for() fetches them for the rows you ask for.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import random
-from collections import Counter
 from pathlib import Path
 
-from .export_candidates import load_official_scorer
+import numpy as np
+
+PARTS = ("head_train", "calib", "test")
+
+SCALAR_NAMES = (
+    "score", "start_logit", "end_logit", "logp_all", "logp_ctx", "rank",
+    "span_tokens", "span_chars", "score_gap", "logp_ctx_gap",
+    "ent_ctx_start", "ent_ctx_end", "cls_start", "cls_end",
+)
 
 
 def find(big, small):
-    """Start index of the token list `small` inside `big`, or -1."""
+    """Return the start of `small` inside `big`, or -1 if it is absent."""
     n = len(small)
     if n == 0:
         return -1
@@ -29,90 +37,171 @@ def find(big, small):
 
 
 def classify(wrong, right):
-    """How the wrong span (token list) differs from the correct one.
-
-    Returns (category, extra leading words, extra trailing words); for 'too short' the words the wrong span misses."""
+    """Classify how the wrong token list differs from the correct one."""
     if not wrong or not right:
         return "empty answer", [], []
+
     i = find(wrong, right)
     if i >= 0:
-        lead, trail = wrong[:i], wrong[i + len(right):]
+        lead = wrong[:i]
+        trail = wrong[i + len(right) :]
         if lead and trail:
             return "too long: extra words on both sides", lead, trail
-        return ("too long: extra leading words", lead, trail) if lead else ("too long: extra trailing words", lead, trail)
+        if lead:
+            return "too long: extra leading words", lead, trail
+        return "too long: extra trailing words", lead, trail
+
     j = find(right, wrong)
     if j >= 0:
-        return "too short: missing words", right[:j], right[j + len(wrong):]
+        return "too short: missing words", right[:j], right[j + len(wrong) :]
+
     if set(wrong) & set(right):
         return "shifted: partial overlap", [], []
+
     return "different answer: no overlap", [], []
 
 
 def fixable_errors(rows, top_k=5):
-    """rows: candidate records in file order. Yields (qid, wrong text, right text, right rank)."""
+    """Yield questions whose rank-1 answer is wrong but a top-k candidate is exact."""
     by_question = {}
     for row in rows:
         if row["rank"] <= top_k:
             by_question.setdefault(row["qid"], []).append(row)
+
     for qid, candidates in by_question.items():
         first = candidates[0]
         if first["rank"] != 1 or first["em"] == 1:
             continue
-        right = next((c for c in candidates if c["em"] == 1), None)
+        right = next((candidate for candidate in candidates if candidate["em"] == 1), None)
         if right is not None:
             yield qid, first["text"], right["text"], right["rank"]
+            
+            
+def build_table(exports_dir, split_path):
+    """Read the export and the split; return a dict of aligned numpy arrays."""
+    exports_dir = Path(exports_dir)
+    questions = json.loads((exports_dir / "questions.json").read_text(encoding="utf-8"))
+    question_index = {question["id"]: i for i, question in enumerate(questions)}
+
+    split = json.loads(Path(split_path).read_text(encoding="utf-8"))["parts"]
+    part_of = {}
+    for number, name in enumerate(PARTS):
+        for qid in split[name]["ids"]:
+            if qid in part_of:
+                raise ValueError(f"Question {qid} appears in more than one part")
+            part_of[qid] = number
+    missing = [qid for qid in question_index if qid not in part_of]
+    if missing:
+        raise ValueError(f"{len(missing)} exported questions are not in the split, e.g. {missing[0]}")
+
+    with (exports_dir / "candidates.jsonl").open(encoding="utf-8") as stream:
+        rows = [json.loads(line) for line in stream]
+    pooled_rows = np.load(exports_dir / "span_pooled.npy", mmap_mode="r").shape[0]
+    if pooled_rows != len(rows):
+        raise ValueError(f"{len(rows)} candidates but {pooled_rows} span-pooled vectors")
+    windows = np.load(exports_dir / "windows.npz")
+
+    def column(name, dtype=np.float64):
+        return np.array([row[name] for row in rows], dtype=dtype)
+
+    qid = np.array([row["qid"] for row in rows])
+    q_index = np.array([question_index[row["qid"]] for row in rows], dtype=np.int32)
+    window = column("window", np.int32)
+    rank = column("rank")
+    score, logp_ctx = column("score"), column("logp_ctx")
+
+    first = rank == 1
+    best_score = np.full(len(questions), np.nan)
+    best_score[q_index[first]] = score[first]
+    best_logp = np.full(len(questions), np.nan)
+    best_logp[q_index[first]] = logp_ctx[first]
+
+    scalars = np.stack(
+        [
+            score, column("start_logit"), column("end_logit"), column("logp_all"), logp_ctx, rank,
+            column("tok_end") - column("tok_start") + 1,
+            column("char_end") - column("char_start"),
+            best_score[q_index] - score,
+            best_logp[q_index] - logp_ctx,
+            windows["ent_ctx_start"][window], windows["ent_ctx_end"][window],
+            windows["cls_start"][window], windows["cls_end"][window],
+        ],
+        axis=1,
+    ).astype(np.float32)
+
+    return {
+        "qid": qid,
+        "q_index": q_index,
+        "part": np.array([part_of[row["qid"]] for row in rows], dtype=np.int8),
+        "rank": rank.astype(np.int16),
+        "window": window,
+        "em": column("em", np.int8),
+        "f1": column("f1", np.float32),
+        "scalars": scalars,
+        "scalar_names": np.array(SCALAR_NAMES),
+        "num_questions": np.array(len(questions)),
+        "question_part": np.array([part_of[question["id"]] for question in questions], dtype=np.int8),
+    }
+
+
+def load_table(path):
+    return dict(np.load(path))
+
+
+def vectors_for(table, rows, span_pooled, h_cls):
+    """[span-pooled vector | h_cls of the candidate's window] for the given table rows."""
+    rows = np.asarray(rows)
+    return np.concatenate([span_pooled[rows], h_cls[table["window"][rows]]], axis=1).astype(np.float32)
+
+
+def summarize(table, ks=(1, 5, 20)):
+    """Per part: sizes, share of correct candidates, and rank-1 / oracle@k EM and F1."""
+    total = int(table["num_questions"])
+    result = {}
+    for number, name in enumerate(PARTS):
+        in_part = table["part"] == number
+        questions = np.where(table["question_part"] == number)[0]  # every question in the part
+        if len(questions) == 0:
+            continue  # e.g. the dev table has only a test part
+        with_candidates = len(np.unique(table["q_index"][in_part]))
+        entry = {
+            "questions": len(questions),
+            "no_candidates": len(questions) - with_candidates,
+            "candidates": int(in_part.sum()),
+            "positive_rate": float(table["em"][in_part].mean()),
+        }
+        for k in ks:
+            rows = in_part & (table["rank"] <= k)
+            hit = np.zeros(total, dtype=bool)
+            hit[table["q_index"][rows][table["em"][rows] == 1]] = True
+            best_f1 = np.zeros(total)
+            np.maximum.at(best_f1, table["q_index"][rows], table["f1"][rows])
+            entry[f"em@{k}"] = 100 * float(hit[questions].mean())
+            entry[f"f1@{k}"] = 100 * float(best_f1[questions].mean())
+        result[name] = entry
+    return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--exports", type=Path, required=True)
-    parser.add_argument("--scorer", type=Path, default=Path("vendor/evaluate-v2.0.py"))
-    parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument("--examples", type=int, default=12)
+    parser.add_argument("--split", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
+    table = build_table(args.exports, args.split)
+    for name, entry in summarize(table).items():
+        print(
+            f"{name:10s} {entry['questions']:5d} questions ({entry['no_candidates']} without candidates) "
+            f"{entry['candidates']:7d} candidates  "
+            f"correct {100 * entry['positive_rate']:.1f}%  "
+            f"rank-1 EM {entry['em@1']:.2f} F1 {entry['f1@1']:.2f}  "
+            f"oracle@5 EM {entry['em@5']:.2f}  oracle@20 EM {entry['em@20']:.2f}"
+        )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(args.output, **table)
+        print(f"Wrote {args.output}")
 
-    scorer = load_official_scorer(args.scorer)
-    with (args.exports / "candidates.jsonl").open(encoding="utf-8") as stream:
-        rows = [row for row in map(json.loads, stream) if row["rank"] <= args.top_k]
-    cases = list(fixable_errors(rows, args.top_k))
-    categories = Counter()
-    extra_leading, extra_trailing = Counter(), Counter()
-    missing_leading, missing_trailing = Counter(), Counter()
-    shown = []
-
-    for qid, wrong, right, rank in cases:
-        wrong_tokens = scorer.normalize_answer(wrong).split()
-        right_tokens = scorer.normalize_answer(right).split()
-        category, lead, trail = classify(wrong_tokens, right_tokens)
-
-        categories[category] += 1
-
-        if category.startswith("too long:"):
-            extra_leading.update(lead)
-            extra_trailing.update(trail)
-        elif category == "too short: missing words":
-            missing_leading.update(lead)
-            missing_trailing.update(trail)
-
-        shown.append((category, wrong, right, rank))
-
-    print(f"Fixable errors (rank 1 wrong, a correct answer within the top {args.top_k}): {len(cases)}")
-    for category, count in categories.most_common():
-        print(f"  {category:40s} {count:5d}  {100 * count / len(cases):5.1f}%")
-
-    print("\nExtra words in wrong spans that are too long:")
-    print("  leading :", extra_leading.most_common(12))
-    print("  trailing:", extra_trailing.most_common(12))
-
-    print("\nWords missing from wrong spans that are too short:")
-    print("  leading :", missing_leading.most_common(12))
-    print("  trailing:", missing_trailing.most_common(12))
-
-    print("\nExamples (wrong rank-1 | correct candidate and its rank):")
-    for category, wrong, right, rank in random.Random(0).sample(
-        shown, min(args.examples, len(shown))
-    ):
-        print(f"  [{category}] {wrong!r} | {right!r} (rank {rank})")
 
 if __name__ == "__main__":
     main()
