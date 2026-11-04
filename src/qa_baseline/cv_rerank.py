@@ -33,7 +33,8 @@ from .span_head import features, group_layout, standardize, standardizer, train_
 LAMBDA_GRID = tuple(round(0.01 * i, 2) for i in range(31))
 ALPHA_GRID = tuple(round(0.1 * i, 1) for i in range(11))
 DEFAULT_L2 = {"scalars": (0.0001, 0.001, 0.01), "scalars+span": (0.03, 0.1, 0.3),
-              "scalars+text": (0.001, 0.01, 0.1), "scalars+text+span": (0.03, 0.1, 0.3)}
+              "scalars+text": (0.001, 0.01, 0.1), "scalars+text+span": (0.03, 0.1, 0.3),
+              "scalars+text+span+edges": (0.03, 0.1, 0.3)}
 # Pairs compared head to head. Added AFTER the first cross-validation run, so they are post hoc.
 PAIRS = (
     ("scalars+span + mix", "scalars + mix"),
@@ -43,6 +44,9 @@ PAIRS = (
     ("scalars+text + mix", "scalars + mix"),
     ("scalars+text+span + mix", "scalars+text + mix"),
     ("scalars+text+span + mix", "scalars+span + mix"),
+    ("scalars+text+span+edges + mix", "length penalty"),
+    ("scalars+text+span+edges", "scalars+text+span"),
+    ("scalars+text+span+edges + mix", "scalars+text+span + mix"),
 )
 
 
@@ -92,12 +96,12 @@ def pick_best(options, evaluate):
     return best[0]
 
 
-def fit_head(table, config, train_rows, calib_rows, pooled, h_cls, l2_grid, steps, lr):
+def fit_head(table, config, train_rows, calib_rows, pooled, h_cls, l2_grid, steps, lr, edges=None):
     """Train on train_rows; choose L2 and the stopping step by loss on calib_rows."""
-    X = features(table, train_rows, config, pooled, h_cls)
+    X = features(table, train_rows, config, pooled, h_cls, edges)
     mean, std = standardizer(X)
     X = standardize(X, mean, std)
-    Xc = standardize(features(table, calib_rows, config, pooled, h_cls), mean, std)
+    Xc = standardize(features(table, calib_rows, config, pooled, h_cls, edges), mean, std)
     groups, groups_c = group_layout(table["q_index"][train_rows]), group_layout(table["q_index"][calib_rows])
     correct, correct_c = table["em"][train_rows].astype(np.float64), table["em"][calib_rows].astype(np.float64)
     best = None
@@ -121,7 +125,7 @@ def compare_pair(em, f1, a, b, articles, folds):
 
 
 def run_cv(table, pooled, h_cls, question_titles, configs=("scalars", "scalars+span"), n_folds=5, seed=42,
-           l2_grids=None, steps=1000, lr=0.02):
+           l2_grids=None, steps=1000, lr=0.02, edges=None):
     l2_grids = {**DEFAULT_L2, **(l2_grids or {})}
     num_q = int(table["num_questions"])
     folds = assign_folds(question_titles, n_folds, seed)
@@ -162,8 +166,14 @@ def run_cv(table, pooled, h_cls, question_titles, configs=("scalars", "scalars+s
         starts_c, sizes_c = group_layout(table["q_index"][calib_rows])
         starts_s, sizes_s = group_layout(table["q_index"][score_rows])
         for config in configs:
-            head = fit_head(table, config, train_rows, calib_rows, pooled, h_cls, l2_grids[config], steps, lr)
-            score_head = standardize(features(table, score_rows, config, pooled, h_cls), head["mean"], head["std"]) @ head["w"]
+            head = fit_head(
+                table, config, train_rows, calib_rows, pooled, h_cls,
+                l2_grids[config], steps, lr, edges=edges,
+            )
+            score_head = standardize(
+                features(table, score_rows, config, pooled, h_cls, edges),
+                head["mean"], head["std"],
+            ) @ head["w"]
             record(config, score_rows, score_head)
             alpha = pick_best(ALPHA_GRID, lambda a: metrics(outcomes(
                 table, calib_rows, mixed_scores(base_col[calib_rows], head["calib_scores"], a, starts_c, sizes_c), num_q), calib_q))
@@ -217,6 +227,13 @@ def main() -> None:
     ids = [q["id"] for q in json.loads((args.exports / "questions.json").read_text(encoding="utf-8"))]
     titles = load_titles(args.validation)
     grids = {}
+    configs = tuple(args.configs.split(","))
+    edges = None
+
+    if any("edges" in config.split("+") for config in configs):
+        edges = np.load(args.exports / "span_edges.npy", mmap_mode="r")
+        if edges.ndim != 3 or edges.shape[0] != len(table["q_index"]) or edges.shape[1] != 2:
+            raise ValueError(f"Unexpected span_edges.npy shape: {edges.shape}")
     if args.l2_scalars:
         grids["scalars"] = tuple(float(v) for v in args.l2_scalars.split(","))
     if args.l2_span:
@@ -226,8 +243,10 @@ def main() -> None:
     if args.text_features:
         from .text_features import load_text_features
         table["text"] = load_text_features(args.text_features, len(table["q_index"]))
-    result = run_cv(table, pooled, h_cls, [titles[i] for i in ids], tuple(args.configs.split(",")),
-                    args.folds, l2_grids=grids, steps=args.steps, lr=args.lr)
+    result = run_cv(
+        table, pooled, h_cls, [titles[i] for i in ids], configs,
+        args.folds, l2_grids=grids, steps=args.steps, lr=args.lr, edges=edges,
+    )
 
     train_n, calib_n, score_n = (int(np.mean(col)) for col in zip(*result["fold_sizes"]))
     print(f"{args.folds} folds of whole articles ({result['n_articles']} articles). Each run trains on about "

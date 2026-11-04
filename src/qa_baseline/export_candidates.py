@@ -194,6 +194,7 @@ def main() -> None:
     window_stats, h_cls_rows, window_question = [], [], []
     spans_per_window = {}
     v_span_by_window = {}
+    v_edges_by_window = {}
     next_window = 0
    
     # Run the model over all windows and collect candidates, hidden states, and softmax statistics
@@ -225,10 +226,19 @@ def main() -> None:
                 v_span_by_window[window_id] = {
                     (c[1], c[2]): hidden[b, c[1] : c[2] + 1].mean(0).half().numpy() for c in found
                 }
+                v_edges_by_window[window_id] = {
+                    (c[1], c[2]): np.stack(
+                        (
+                            hidden[b, c[1]].half().numpy(),
+                            hidden[b, c[2]].half().numpy(),
+                        )
+                    )
+                    for c in found
+                }
                 spans_per_window.setdefault(qid, []).append((window_id, found))
             next_window += starts.shape[0]
            
-    questions, rows, pooled_rows, predictions, per_question_scores = [], [], [], {}, []
+    questions, rows, pooled_rows, edge_rows, predictions, per_question_scores = [], [], [], [], {}, []
    
     for example in examples:
         # Score candidates for this question and collect results
@@ -252,6 +262,7 @@ def main() -> None:
                 }
             )
             pooled_rows.append(v_span_by_window[window_id][(s_tok, e_tok)])
+            edge_rows.append(v_edges_by_window[window_id][(s_tok, e_tok)])
             scores.append((exact, f1))
             if rank == 1:
                 top1_text = text
@@ -281,6 +292,12 @@ def main() -> None:
             stream.write(json.dumps(row) + "\n")
     hidden_size = model.config.hidden_size
     np.save(out / "span_pooled.npy", np.stack(pooled_rows) if pooled_rows else np.zeros((0, hidden_size), np.float16))
+    np.save(
+        out / "span_edges.npy",
+        np.stack(edge_rows)
+        if edge_rows
+        else np.zeros((0, 2, hidden_size), dtype=np.float16),
+    )
     np.savez(
         out / "windows.npz",
         h_cls=np.stack(h_cls_rows),

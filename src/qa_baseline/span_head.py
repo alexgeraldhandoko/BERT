@@ -82,19 +82,29 @@ def train_listwise(X, correct, groups, X_val, correct_val, groups_val, l2, steps
     return best[1], best[0], best[2]
 
 
-def features(table, rows, config, pooled, h_cls):
-    """Scalars always; then text (boundary flags), span (pooled vector) and cls blocks as named in config."""
+def features(table, rows, config, pooled, h_cls, edges=None):
+    """Scalars plus optional text, span, CLS, and boundary-vector features."""
     parts = config.split("+")
-    unknown = set(parts) - {"scalars", "text", "span", "cls"}
+    unknown = set(parts) - {"scalars", "text", "span", "cls", "edges"}
     if parts[0] != "scalars" or unknown:
         raise ValueError(f"Unknown feature config {config!r}")
+
     blocks = [table["scalars"][rows]]
+
     if "text" in parts:
         blocks.append(np.asarray(table["text"][rows], dtype=np.float32))
     if "span" in parts:
         blocks.append(np.asarray(pooled[rows], dtype=np.float32))
     if "cls" in parts:
         blocks.append(np.asarray(h_cls[table["window"][rows]], dtype=np.float32))
+    if "edges" in parts:
+        if edges is None:
+            raise ValueError("This feature config requires span_edges.npy")
+        edge_rows = np.asarray(edges[rows], dtype=np.float32)
+        if edge_rows.ndim != 3 or edge_rows.shape[1] != 2:
+            raise ValueError(f"Expected boundary vectors shaped (rows, 2, hidden), got {edge_rows.shape}")
+        blocks.append(edge_rows.reshape(len(rows), edge_rows.shape[1] * edge_rows.shape[2]))
+
     return np.concatenate(blocks, axis=1)
 
 
