@@ -1,0 +1,46 @@
+{
+  "questions": 10570,
+  "qa": {
+    "exact": 79.65941343424787,
+    "f1": 87.56534785783906,
+    "total": 10570,
+    "HasAns_exact": 79.65941343424787,
+    "HasAns_f1": 87.56534785783906,
+    "HasAns_total": 10570
+  },
+  "accuracy_for_confidence": 0.7965941343424787,
+  "raw_softmax": {
+    "ece_10_bins": 0.1548846720496389,
+    "brier": 0.15350793469228133,
+    "nll": 0.4582045359144202,
+    "roc_auc": 0.835365657625808,
+    "mean_confidence": 0.6417094622928393
+  },
+  "kamath_forest": {
+    "ece_10_bins": 0.12666938622955454,
+    "brier": 0.13882252407077195,
+    "nll": 0.43000871994735906,
+    "roc_auc": 0.8356573772302934,
+    "mean_confidence": 0.6699247481129247
+  },
+  "forest": {
+    "training_questions": 8741,
+    "seed": 42,
+    "trees": 200,
+    "min_leaf": 5,
+    "model_sha256": "ff248e55be19b031f86532a8f3dc8e501b7c3bea38ac5f62c63f91d86a8d2fb7",
+    "calibration_data_sha256": "c3023c81e97e2a8542b54770c9ed5c8b6d1daa73f099c0cf574bc493b69669d5"
+  },
+  "evaluation_data_sha256": "95aa6a52d5d6a735563366753ca50492a658031da74f301ac5238b03966972c9",
+  "feature_names": [
+    "passage_words",
+    "predicted_answer_words",
+    "top1_span_probability",
+    "top2_span_probability",
+    "top3_span_probability",
+    "top4_span_probability",
+    "top5_span_probability"
+  ],
+  "feature_definition": "Whitespace word lengths; top five distinct character spans by per-window P(start)*P(end).",
+  "ece_definition": "10 equal-width confidence bins; right endpoint included in final bin."
+}
