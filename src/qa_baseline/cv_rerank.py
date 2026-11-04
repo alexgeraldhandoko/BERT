@@ -34,7 +34,7 @@ LAMBDA_GRID = tuple(round(0.01 * i, 2) for i in range(31))
 ALPHA_GRID = tuple(round(0.1 * i, 1) for i in range(11))
 DEFAULT_L2 = {"scalars": (0.0001, 0.001, 0.01), "scalars+span": (0.03, 0.1, 0.3),
               "scalars+text": (0.001, 0.01, 0.1), "scalars+text+span": (0.03, 0.1, 0.3),
-              "scalars+text+span+edges": (0.03, 0.1, 0.3)}
+              "scalars+text+span+edges": (0.03, 0.1, 0.3, 1.0, 3.0)}
 # Pairs compared head to head. Added AFTER the first cross-validation run, so they are post hoc.
 PAIRS = (
     ("scalars+span + mix", "scalars + mix"),
