@@ -1,0 +1,27 @@
+{
+  "config": "scalars+text+span+edges",
+  "l2": 0.3,
+  "step": 550,
+  "alpha": 0.5,
+  "lambda": 0.08,
+  "calib_fold": 0,
+  "seed": 42,
+  "n_folds": 5,
+  "train_questions": 7100,
+  "calib_questions": 1641,
+  "on_calibration_fold": {
+    "baseline": [
+      68.8,
+      82.49
+    ],
+    "length penalty": [
+      70.26,
+      83.06
+    ],
+    "frozen head + mix": [
+      69.9,
+      82.8
+    ]
+  },
+  "n_features": 2416
+}
