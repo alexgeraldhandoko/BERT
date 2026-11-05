@@ -33,7 +33,7 @@ def em_f1(result, questions):
 
 
 def freeze(table, pooled, question_titles, config="scalars+text+span", n_folds=5, seed=42, calib_fold=0,
-           l2_grid=None, steps=1000, lr=0.02):
+           l2_grid=None, steps=1000, lr=0.02, edges=None):
     """Train on every fold but calib_fold; choose L2, step and alpha there; choose lambda on all questions."""
     num_q = int(table["num_questions"])
     folds = assign_folds(question_titles, n_folds, seed)
@@ -44,7 +44,7 @@ def freeze(table, pooled, question_titles, config="scalars+text+span", n_folds=5
     base = table["scalars"][:, names.index("score")].astype(np.float64)
     tokens = table["scalars"][:, names.index("span_tokens")].astype(np.float64)
 
-    head = fit_head(table, config, train_rows, calib_rows, pooled, None, l2_grid or DEFAULT_L2[config], steps, lr)
+    head = fit_head(table, config, train_rows, calib_rows, pooled, None, l2_grid or DEFAULT_L2[config], steps, lr, edges=edges)
     starts, sizes = group_layout(table["q_index"][calib_rows])
     mix = lambda a: mixed_scores(base[calib_rows], head["calib_scores"], a, starts, sizes)
     alpha = pick_best(ALPHA_GRID, lambda a: em_f1(outcomes(table, calib_rows, mix(a), num_q), calib_q))
@@ -106,8 +106,14 @@ def main() -> None:
     ids = [q["id"] for q in json.loads((args.exports / "questions.json").read_text(encoding="utf-8"))]
     titles = load_titles(args.validation)
     grid = tuple(float(v) for v in args.l2.split(",")) if args.l2 else None
+    edges = None
+    if "edges" in args.config.split("+"):
+        edges = np.load(args.exports / "span_edges.npy", mmap_mode="r")
+        if edges.ndim != 3 or edges.shape[0] != len(table["q_index"]) or edges.shape[1] != 2:
+            raise ValueError(f"Unexpected span_edges.npy shape: {edges.shape}")
+    
     frozen = freeze(table, pooled, [titles[i] for i in ids], args.config, calib_fold=args.calib_fold,
-                    l2_grid=grid, steps=args.steps, lr=args.lr)
+                    l2_grid=grid, steps=args.steps, lr=args.lr, edges=edges)
     save_final(args.output_dir, frozen)
 
     print(f"Trained on {frozen['train_questions']} questions, calibrated on fold {frozen['calib_fold']} "

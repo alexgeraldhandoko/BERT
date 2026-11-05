@@ -27,23 +27,23 @@ from .span_head import features, group_layout, standardize
 PRIMARY = "frozen head + mix"
 
 
-def head_scores_chunked(table, pooled, final, chunk=20000):
+def head_scores_chunked(table, pooled, final, chunk=20000, edges=None):
     """The frozen head's score for every candidate row, computed in chunks to bound memory."""
     n = len(table["q_index"])
     out = np.zeros(n)
     for start in range(0, n, chunk):
         rows = np.arange(start, min(start + chunk, n))
-        X = standardize(features(table, rows, final["config"], pooled, None), final["mean"], final["std"])
+        X = standardize(features(table, rows, final["config"], pooled, None, edges), final["mean"], final["std"])
         out[start : start + len(rows)] = X @ final["w"]
     return out
 
 
-def build_scores(table, pooled, final):
+def build_scores(table, pooled, final, edges=None):
     names = list(table["scalar_names"])
     base = table["scalars"][:, names.index("score")].astype(np.float64)
     tokens = table["scalars"][:, names.index("span_tokens")].astype(np.float64)
     starts, sizes = group_layout(table["q_index"])
-    head = head_scores_chunked(table, pooled, final)
+    head = head_scores_chunked(table, pooled, final, edges=edges)
     return {
         "baseline": -table["rank"].astype(np.float64),
         "length penalty": base - final["lambda"] * tokens,
@@ -51,10 +51,10 @@ def build_scores(table, pooled, final):
     }
 
 
-def score_dev(table, pooled, final, articles):
+def score_dev(table, pooled, final, articles, edges=None):
     """Report vs baseline for each method, per-method outcomes, and the paired primary-minus-penalty difference."""
     number = PARTS.index("test")
-    report, outcomes = evaluate_methods(table, number, build_scores(table, pooled, final), articles)
+    report, outcomes = evaluate_methods(table, number, build_scores(table, pooled, final, edges=edges), articles)
     paired = {}
     for key, column in (("em", 1), ("f1", 2)):
         mean, low, high, _ = article_bootstrap(outcomes[PRIMARY][column] - outcomes["length penalty"][column], articles)
@@ -90,13 +90,23 @@ def main() -> None:
     table["text"] = load_text_features(args.text_features, len(table["q_index"]))
     pooled = np.load(args.exports / "span_pooled.npy", mmap_mode="r")
     final = load_final(args.final)
+    edges = None
+    if "edges" in final["config"].split("+"):
+        edges = np.load(args.exports / "span_edges.npy", mmap_mode="r")
+        if (
+            edges.ndim != 3
+            or edges.shape[0] != len(table["q_index"])
+            or edges.shape[1] != 2
+            or edges.shape[2] != pooled.shape[1]
+        ):
+            raise ValueError(f"Unexpected span_edges.npy shape: {edges.shape}")
     ids = [q["id"] for q in json.loads((args.exports / "questions.json").read_text(encoding="utf-8"))]
     titles = load_titles(args.dev)
     number = PARTS.index("test")
     questions = np.where(table["question_part"] == number)[0]
     articles = np.array([titles[ids[q]] for q in questions])
 
-    report, outcomes, paired = score_dev(table, pooled, final, articles)
+    report, outcomes, paired = score_dev(table, pooled, final, articles, edges=edges)
     verdict = decide(report, paired)
     print(f"Dev: {len(questions)} questions, {len(set(articles))} articles. "
           f"Frozen: {final['config']}, l2={final['l2']:g}, step={final['step']}, alpha={final['alpha']:g}, lambda={final['lambda']:g}")
