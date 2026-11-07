@@ -44,8 +44,7 @@ def binary_nll(logits: np.ndarray, y: np.ndarray) -> float:
     return float(np.mean(np.logaddexp(0.0, logits) - y * logits))
 
 
-## Trains regularized logidtic confidence head on head_train and fit temparature on calib.
-
+## Train a regularized logistic confidence head on head_train and fits a temperature on calib.
 def fit_logistic(
     x: np.ndarray,
     y: np.ndarray,
@@ -96,7 +95,39 @@ def fit_temperature(logits: np.ndarray, y: np.ndarray) -> float:
         return binary_nll(logits / np.exp(log_t), y)
 
     f1, f2 = objective(x1), objective(x2)
-    
+    for _ in range(120):
+        if f1 <= f2:
+            hi, x2, f2 = x2, x1, f1
+            x1 = hi - ratio * (hi - lo)
+            f1 = objective(x1)
+        else:
+            lo, x1, f1 = x1, x2, f2
+            x2 = lo + ratio * (hi - lo)
+            f2 = objective(x2)
+    return float(np.exp((lo + hi) / 2.0))
+
+
+def auc(y: np.ndarray, scores: np.ndarray) -> float:
+    """ROC AUC with average ranks for tied scores; returns NaN if one class is absent."""
+    y = np.asarray(y, dtype=np.int8)
+    scores = np.asarray(scores, dtype=np.float64)
+    positives, negatives = int(y.sum()), int((1 - y).sum())
+    if positives == 0 or negatives == 0:
+        return float("nan")
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+    ranks = np.empty(len(scores), dtype=np.float64)
+    start = 0
+    while start < len(scores):
+        end = start + 1
+        while end < len(scores) and sorted_scores[end] == sorted_scores[start]:
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
+    rank_sum = float(ranks[y == 1].sum())
+    return (rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives)
+
+
 def confidence_metrics(y: np.ndarray, probabilities: np.ndarray, bins: int = 15) -> dict:
     y = np.asarray(y, dtype=np.float64)
     p = np.clip(np.asarray(probabilities, dtype=np.float64), 1e-12, 1 - 1e-12)
