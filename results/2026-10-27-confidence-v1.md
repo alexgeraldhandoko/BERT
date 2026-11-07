@@ -198,6 +198,11 @@ above what an average human annotation achieves on the full set.
 
 ## 5. Error-rate targeting (the most persuasive result)
 
+> **Session-4 update (2026-11-07).** Platt is now a first-class pipeline method
+> (`calibrate fit --method platt`, half-split Δa=0.036 / Δb=0.016, pass) and the
+> numbers below are pipeline-reproduced, no longer chat-only. New: v2
+> renormalisation results (§10).
+
 Threshold chosen on **val** so the retained set has ≤ 5% error, then the
 achieved error and coverage measured on **dev**, per signal:
 
@@ -221,6 +226,12 @@ transfer by rank.
 ---
 
 ## 6. Engineering: two bugs found this session
+
+> Note: this section and §3.4 describe session 2. The Platt numbers in §3.4 are
+> now pipeline-reproduced (2026-11-07): `calibration-platt.json`, fitted
+> a=0.7672 b=+0.2489, half-split pass; the `report` row reproduces
+> Brier 0.1391 / ECE 0.1171 / NLL 0.4280 exactly, and Platt **passes all three
+> section-6 gates** (NLL ↓, Brier ↓, ECE ↓) that the temperature failed.
 
 Both were invisible to a "22 tests green" local suite, because the local venv has
 no torch/transformers and `predict.main()` had therefore never executed anywhere.
@@ -283,6 +294,50 @@ Next, in order of expected value:
 3. Keep the **error-rate targeting** table as the headline for the report: it is
    rank-based, so it survives base-rate shifts, and it is the one capability a
    ranking-only score cannot provide.
+
+## 10. v2 renormalisation: run 2026-11-07 (prediction CONFIRMED)
+
+The Oct-28 prediction (this repo's handoff §5.1, and Kea's team-chat message of
+that date): renormalising over legal spans drops the Brier. **Confirmed.**
+
+`calibrate fit --signal v2` (T fitted on the v2 signal, val: **T=1.10**,
+half-split T_A=T_B=1.10, Δ=0) then `calibrate report --signal v2` on dev:
+
+| dev | mean_c | Brier | BSS | ECE | NLL | AUC |
+|---|---|---|---|---|---|---|
+| v1 raw | 0.6503 | 0.1523 | +0.0617 | 0.1457 | 0.4548 | 0.8293 |
+| v2 raw (no fitted params) | **0.6789** | **0.1456** | **+0.1032** | **0.1175** | **0.4387** | 0.8187 |
+| v2 + T (1.10) | 0.6496 | 0.1534 | +0.0553 | 0.1464 | 0.4581 | 0.8187 |
+| Platt (v1 signal) | 0.6789 | **0.1391** | +0.1432 | 0.1171 | 0.4280 | 0.8293 |
+| Kamath forest (cited) | 0.6699 | 0.1388 | — | 0.1267 | 0.4300 | 0.8357 |
+
+Readings:
+
+1. **Renormalisation fixes a large part of the level error with zero fitted
+   parameters**: mean_c moves 0.6503 → 0.6789 toward the base rate, and Brier,
+   BSS, ECE and NLL all improve over v1-raw. The mechanism is exactly the one
+   predicted: the mass the v1 product parked on illegal spans returns to the
+   legal pool.
+2. **Pre-declared criterion (v2+T Brier < 0.1543) technically passes
+   (0.1534, margin 0.0009) but is hollow**: v2+T is worse than v2-raw on every
+   metric, for the same base-rate reason as v1+T. The temperature fit on the
+   v2 signal (T=1.10 on val) again does not transfer. The substantive pass is
+   v2-raw (0.1456) < v1-raw (0.1523).
+3. **v2 costs a little ranking** (AUC 0.8293 → 0.8187) — renormalisation
+   redistributes mass in a way that is not rank-preserving. The error-budget
+   table (§5) should therefore still be quoted from the v1 signal.
+4. **Best overall on dev is Platt on the v1 signal** (0.1391), with v2-raw the
+   best parameter-free signal (0.1456). Kamath's forest (cited from
+   `results/kamath-summary.json`, identical protocol) sits at 0.1388 — a
+   2-parameter affine map matches a 200-tree forest.
+
+Engineering notes (recorded for reproducibility): 3 val rows have empty context
+masks (no legal spans) and must be excluded from the v2 fit (`calibrate fit`
+now prints the count); the first fit attempt was corrupted by them (NaN
+poisoned the grid search into returning the grid edge, T=0.25, with a
+half-split disagreement that vanished after the fix). Dev has no such rows.
+The chunked `renormalised_probabilities` keeps the fit at ~8 min CPU; the
+report at ~30 s.
 
 ## 8. Reproduce
 

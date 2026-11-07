@@ -223,6 +223,97 @@ def renormalised_span_probability(
     return float(np.exp(s[i] + e[j] - log_z))
 
 
+def renormalised_probabilities(
+    s: np.ndarray,
+    e: np.ndarray,
+    mask: np.ndarray,
+    best_i: np.ndarray,
+    best_j: np.ndarray,
+    T_values: list[float],
+    chunk: int = 256,
+) -> np.ndarray:
+    """Vectorised v2 signal: renormalised_span_probability for every row and
+    every temperature in T_values. Returns (n, len(T_values)).
+
+    The naive per-row loop is O(n * |T| * L^2) with Python overhead per call;
+    this chunks rows so each temperature evaluates a (chunk, L, L) grid in
+    one vectorised logsumexp. Used by fit_temperature_v2 and the report paths.
+    """
+    s = np.asarray(s, dtype=np.float64)
+    e = np.asarray(e, dtype=np.float64)
+    mask = np.asarray(mask, dtype=bool)
+    best_i = np.asarray(best_i, dtype=int)
+    best_j = np.asarray(best_j, dtype=int)
+    n, length = s.shape
+    triu = np.triu(np.ones((length, length), dtype=bool))
+    out = np.zeros((n, len(T_values)), dtype=np.float64)
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        sc = s[start:stop, :, None] + e[start:stop, None, :]   # (B, L, L)
+        legal = mask[start:stop, :, None] & mask[start:stop, None, :] & triu
+        row_legal = legal.reshape(stop - start, -1).any(axis=1)
+        if not row_legal.any():
+            raise ValueError("Chunk has no rows with legal spans")
+        bi = best_i[start:stop]
+        bj = best_j[start:stop]
+        rows_idx = np.arange(stop - start)
+        for t_col, T in enumerate(T_values):
+            scaled = np.where(legal, sc / T, -np.inf)
+            flat = scaled.reshape(stop - start, -1)
+            max_score = flat.max(axis=1)
+            # rows with no legal span: max is -inf; mark them NaN (callers filter)
+            max_score = np.where(row_legal, max_score, 0.0)
+            with np.errstate(invalid="ignore"):
+                log_z = np.where(
+                    row_legal,
+                    max_score + np.log(np.exp(flat - max_score[:, None]).sum(axis=1)),
+                    np.nan,
+                )
+            picked = sc[rows_idx, bi, bj] / T
+            out[start:stop, t_col] = np.where(row_legal, np.exp(picked - log_z), np.nan)
+    return out
+
+
+def fit_temperature_v2(
+    s: np.ndarray,
+    e: np.ndarray,
+    mask: np.ndarray,
+    best_i: np.ndarray,
+    best_j: np.ndarray,
+    y: np.ndarray,
+    coarse: np.ndarray = np.linspace(0.25, 4.0, 16),
+) -> tuple[float, float]:
+    """Fit T for the renormalised (v2) signal: coarse grid, then a +-0.25
+    refinement at 0.05 step. Returns (T, best_nll). Same NLL objective as
+    fit_temperature, so the two are compared on equal footing.
+
+    Rows with no legal spans (empty context mask) produce NaN probabilities
+    and MUST be filtered by the caller; this raises if any remain.
+    """
+    s = np.asarray(s, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+
+    def nll_at(temps: np.ndarray) -> np.ndarray:
+        probs = renormalised_probabilities(s, e, mask, best_i, best_j, list(temps))
+        if np.isnan(probs).any():
+            raise ValueError(
+                "NaN v2 probabilities: filter rows with no legal spans before fitting"
+            )
+        probs = np.clip(probs, 1e-12, 1 - 1e-12)
+        losses = -(y[:, None] * np.log(probs) + (1 - y[:, None]) * np.log(1 - probs))
+        return losses.mean(axis=0)
+
+    losses = nll_at(coarse)
+    best = float(coarse[int(np.argmin(losses))])
+    best_loss = float(losses.min())
+    fine = np.arange(max(0.05, best - 0.25), best + 0.251, 0.05)
+    fine_losses = nll_at(fine)
+    k = int(np.argmin(fine_losses))
+    if fine_losses[k] < best_loss:
+        best, best_loss = float(fine[k]), float(fine_losses[k])
+    return best, best_loss
+
+
 def fit_two_temperature(
     s: np.ndarray,
     e: np.ndarray,
@@ -296,3 +387,46 @@ def fit_temperature(
     if best_t is None:
         raise ValueError("Empty temperature grid")
     return best_t
+
+
+def _platt_apply(c: np.ndarray, a: float, b: float) -> np.ndarray:
+    """Platt map: sigmoid(a * logit(c) + b). c must lie in (0, 1) after clip."""
+    c = np.clip(np.asarray(c, dtype=np.float64), 1e-9, 1 - 1e-9)
+    z = np.log(c / (1 - c))
+    return 1.0 / (1.0 + np.exp(-(a * z + b)))
+
+
+def fit_platt(
+    c: np.ndarray, y: np.ndarray, max_iter: int = 100, tol: float = 1e-10
+) -> tuple[float, float]:
+    """Fit Platt scaling (a, b) by Newton/IRLS on logit(c) against y.
+
+    Minimises the same loss as fit_temperature (binary cross-entropy), so the
+    two methods are compared on equal footing. `c` are the uncalibrated
+    confidences (T=1). Returns (a, b). Initialised at a=1, b=0 (identity),
+    which is also the fallback if Newton fails to move.
+    """
+    c = np.asarray(c, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    if c.ndim != 1 or y.shape != c.shape:
+        raise ValueError("c and y must be 1-D arrays of equal length")
+    if set(np.unique(y).tolist()) - {0.0, 1.0}:
+        raise ValueError("y must be binary")
+    z = np.log(np.clip(c, 1e-9, 1 - 1e-9) / (1 - np.clip(c, 1e-9, 1 - 1e-9)))
+    a, b = 1.0, 0.0
+    for _ in range(max_iter):
+        p = 1.0 / (1.0 + np.exp(-(a * z + b)))
+        w = p * (1 - p)
+        grad = np.array([np.dot(z, y - p), np.sum(y - p)])
+        hess = np.array(
+            [[np.dot(w, z * z), np.dot(w, z)], [np.dot(w, z), np.sum(w)]]
+        )
+        try:
+            step = np.linalg.solve(hess, grad)
+        except np.linalg.LinAlgError:
+            break
+        a += step[0]
+        b += step[1]
+        if np.max(np.abs(step)) < tol:
+            break
+    return float(a), float(b)

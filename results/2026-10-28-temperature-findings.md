@@ -82,3 +82,34 @@ applied it to dev:
 The offset b absorbs part of the base-rate shift, so Platt recovers about half
 the possible gain. The remaining half needs labels graded under dev's own
 convention. No calibrator fitted on validation can learn that.
+
+> **Update 2026-11-07.** Platt is now a pipeline method
+> (`calibrate fit --method platt`). The fitted values are a=0.7672, b=+0.2489;
+> the half-split check passes (Δa=0.036, Δb=0.016); and the report reproduces
+> the table above exactly (dev Brier 0.1391, ECE 0.1171, NLL 0.4280). Unlike
+> the temperature, Platt **passes all three report gates** on dev. The
+> "Platt fitted on dev (diagnostic)" row stays a diagnostic — never a method.
+
+## Finding 6 — Renormalising over legal spans fixes most of the level error for free (2026-11-07)
+
+The Oct-28 prediction: the v1 confidence parks probability mass on tokens that
+cannot be answers, so putting that mass back (renormalising over legal spans)
+should improve the scores. **Confirmed on dev:**
+
+| dev | mean_c | Brier | BSS | ECE | NLL |
+|---|---|---|---|---|---|
+| v1 raw | 0.6503 | 0.1523 | +0.0617 | 0.1457 | 0.4548 |
+| v2 raw (renormalised, no fitted parameters) | **0.6789** | **0.1456** | **+0.1032** | **0.1175** | **0.4387** |
+| v2 + temperature (T=1.10, fitted on val) | 0.6496 | 0.1534 | +0.0553 | 0.1464 | 0.4581 |
+
+One number changes sign in the story: the temperature fitted on the v2 signal
+again does not transfer (T=1.10 flattens dev, same base-rate reason as Finding
+4). The fix that works needs no fitted parameters at all. Platt on the v1
+signal remains the best overall (Brier 0.1391); renormalisation is the best
+parameter-free signal (0.1456). One cost: renormalisation is not
+rank-preserving — AUC drops 0.829 → 0.819 — so the error-budget table
+(Finding 6 in the older numbering, "the most persuasive result") should still
+be quoted from the v1 signal.
+
+Reproduce: `calibrate fit --method platt`, `calibrate fit --signal v2`,
+`calibrate report --signal v2` (commands in the technical report §10).

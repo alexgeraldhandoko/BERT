@@ -33,10 +33,12 @@ from pathlib import Path
 import numpy as np
 
 from .confidence import (
+    _platt_apply,
     brier,
     brier_skill_score,
     correctness,
     ece,
+    fit_platt,
     fit_temperature,
     nll,
     reliability_bins,
@@ -82,6 +84,13 @@ def _signal(scores: dict, name: str, T: float = 1.0) -> np.ndarray:
     s, e, mask = scores["s"], scores["e"], scores["mask"]
     if name == "prob":
         return _confidence(scores, T=T)
+    if name == "v2":
+        from .confidence import renormalised_probabilities
+
+        vals = renormalised_probabilities(
+            s, e, mask, scores["best_i"], scores["best_j"], [T]
+        )
+        return vals[:, 0]
     if name in ("margin", "neg_margin"):
         from .confidence import span_margin
 
@@ -145,7 +154,6 @@ def cmd_target(args: argparse.Namespace) -> None:
     y_dev = _labels(dev_scores, dev_examples, dev_preds)
 
     calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
-    T = calibration["temperature"]
 
     rows = []
     for signal in ("prob", "margin", "entropy"):
@@ -182,7 +190,8 @@ def cmd_target(args: argparse.Namespace) -> None:
 
     output = {
         "target_error": args.target_error,
-        "temperature": T,
+        "method": calibration.get("method", "temperature scaling"),
+        "temperature": calibration.get("temperature"),
         "fitted_on": str(args.val_data),
         "reported_on": str(args.data),
         "signals": rows,
@@ -192,6 +201,76 @@ def cmd_target(args: argparse.Namespace) -> None:
     print(f"Wrote {args.output}")
 
 
+def _fit_by_method(
+    method: str,
+    scores: dict,
+    y: np.ndarray,
+    signal: str = "prob",
+) -> dict:
+    """Fit the requested calibration method on the full cache.
+
+    Returns the calibration.json fields for this method (without
+    fitted_on/n/base_rate/package_versions, which cmd_fit adds).
+    """
+    c = _confidence(scores, T=1.0) if signal == "prob" else _signal(scores, signal, T=1.0)
+    if method == "temperature":
+        if signal == "v2":
+            from .confidence import fit_temperature_v2
+
+            T, _ = fit_temperature_v2(
+                scores["s"], scores["e"], scores["mask"],
+                scores["best_i"], scores["best_j"], y,
+            )
+        else:
+            T = fit_temperature(
+                scores["s"], scores["e"], scores["mask"],
+                scores["best_i"], scores["best_j"], y,
+            )
+        return {"method": "temperature scaling", "temperature": T}
+    if method == "platt":
+        a, b = fit_platt(c, y)
+        return {"method": "platt", "a": a, "b": b}
+    raise ValueError(f"Unknown calibration method: {method}")
+
+
+def _half_split_check(
+    method: str,
+    scores: dict,
+    flat: list[dict],
+    y: np.ndarray,
+    signal: str = "prob",
+) -> dict:
+    """Refit on each half of the partition, split BY ARTICLE, and report the
+    parameter disagreement (handoff gotcha 9). Tolerances: ±0.05 on a
+    one-parameter fit, ±0.05 on a and ±0.1 on b for Platt (two parameters,
+    same order of magnitude on 8.7k rows).
+    """
+    articles = {}
+    for example in flat:
+        articles.setdefault(example["article_title"], []).append(example["id"])
+    titles = sorted(articles)
+    half = len(titles) // 2
+    groups = [set().union(*(articles[t] for t in titles[:half])),
+              set().union(*(articles[t] for t in titles[half:]))]
+    fits = []
+    for group in groups:
+        rows = np.array([qid in group for qid in scores["qid"]])
+        sub = {k: v[rows] for k, v in scores.items()}
+        fits.append(_fit_by_method(method, sub, y[rows], signal))
+    if method == "platt":
+        delta_a = abs(fits[0]["a"] - fits[1]["a"])
+        delta_b = abs(fits[0]["b"] - fits[1]["b"])
+        return {
+            "a_A": fits[0]["a"], "a_B": fits[1]["a"],
+            "b_A": fits[0]["b"], "b_B": fits[1]["b"],
+            "delta_a": delta_a, "delta_b": delta_b,
+            "tolerance": {"a": 0.05, "b": 0.1},
+            "pass": bool(delta_a <= 0.05 and delta_b <= 0.1),
+        }
+    t_a, t_b = fits[0]["temperature"], fits[1]["temperature"]
+    return {"T_A": t_a, "T_B": t_b, "delta": abs(t_a - t_b)}
+
+
 def cmd_fit(args: argparse.Namespace) -> None:
     scores = _load_scores(args.scores)
     from .data import load_squad
@@ -199,11 +278,20 @@ def cmd_fit(args: argparse.Namespace) -> None:
     flat = load_squad(args.data)
     predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
     y = _labels(scores, flat, predictions)
-    T = fit_temperature(scores["s"], scores["e"], scores["mask"], scores["best_i"], scores["best_j"], y)
 
+    if args.signal == "v2":
+        # rows with no legal spans (empty context mask) have no v2 probability;
+        # exclude them from the fit and say how many (dev has none, val has 3).
+        keep = scores["mask"].any(axis=1)
+        n_dropped = int((~keep).sum())
+        if n_dropped:
+            scores = {k: v[keep] for k, v in scores.items()}
+            y = y[keep]
+            print(f"v2 fit: excluded {n_dropped} rows with no legal spans")
+
+    fit = _fit_by_method(args.method, scores, y, args.signal)
     result = {
-        "method": "temperature scaling",
-        "temperature": T,
+        **fit,
         "fitted_on": str(args.data),
         "n": int(len(y)),
         "base_rate": float(y.mean()),
@@ -214,36 +302,49 @@ def cmd_fit(args: argparse.Namespace) -> None:
         },
     }
 
-    # Half-split sanity check (handoff gotcha 9): fit T on each half of the
-    # val partition, split BY ARTICLE; T_A ≈ T_B means one parameter on 8.7k
-    # rows has nothing to overfit.
-    articles = {}
-    for example in flat:
-        articles.setdefault(example["article_title"], []).append(example["id"])
-    titles = sorted(articles)
-    half = len(titles) // 2
-    groups = [set().union(*(articles[t] for t in titles[:half])),
-              set().union(*(articles[t] for t in titles[half:]))]
-    t_half = []
-    for group in groups:
-        rows = np.array([qid in group for qid in scores["qid"]])
-        t_half.append(fit_temperature(
-            scores["s"][rows], scores["e"][rows], scores["mask"][rows],
-            scores["best_i"][rows], scores["best_j"][rows], y[rows],
-        ))
-    result["half_split"] = {"T_A": t_half[0], "T_B": t_half[1], "delta": abs(t_half[0] - t_half[1])}
+    # Half-split sanity check (handoff gotcha 9): refit on each half of the
+    # val partition, split BY ARTICLE; agreeing parameters mean the fit has
+    # nothing to overfit on 8.7k rows.
+    half = _half_split_check(args.method, scores, flat, y, args.signal)
+    result["half_split"] = half
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(f"Fitted T={T:.4f} on {len(y)} questions "
-          f"(half-split: T_A={t_half[0]:.4f}, T_B={t_half[1]:.4f}) -> {args.output}")
+    if args.method == "platt":
+        print(f"Fitted Platt a={fit['a']:.4f} b={fit['b']:+.4f} on {len(y)} questions "
+              f"(half-split: a_A={half['a_A']:.4f}, a_B={half['a_B']:.4f}, "
+              f"pass={half['pass']}) -> {args.output}")
+    else:
+        print(f"Fitted T={fit['temperature']:.4f} on {len(y)} questions "
+              f"(half-split: T_A={half['T_A']:.4f}, T_B={half['T_B']:.4f}) -> {args.output}")
+
+
+def _calibration_label(calibration: dict) -> str:
+    """Human-readable row label for the fitted method."""
+    if calibration.get("method") == "platt":
+        return f"+Platt (a={calibration['a']:.2f})"
+    return f"+T (T={calibration['temperature']:.2f})"
+
+
+def _apply_calibration(
+    calibration: dict, scores: dict, c_uncal: np.ndarray, signal: str = "prob"
+) -> np.ndarray:
+    """Apply the fitted method in calibration.json to uncalibrated confidences.
+
+    Temperature: refit the softmax rows with T (identical to scaling c through
+    the temperature map). Platt: sigmoid(a*logit(c)+b) on the confidence.
+    """
+    if calibration.get("method") == "platt":
+        return _platt_apply(c_uncal, calibration["a"], calibration["b"])
+    if signal == "v2":
+        return _signal(scores, "v2", T=calibration["temperature"])
+    return _confidence(scores, T=calibration["temperature"])
 
 
 def cmd_report(args: argparse.Namespace) -> None:
     scores = _load_scores(args.scores)
     predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
     calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
-    T = calibration["temperature"]
 
     # EM / F1 straight from the vendor scorer (gold first, max over golds).
     import subprocess
@@ -260,8 +361,8 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     flat = load_squad(args.data)
     y = _labels(scores, flat, predictions)
-    c_uncal = _confidence(scores, T=1.0)
-    c_cal = _confidence(scores, T=T)
+    c_uncal = _signal(scores, args.signal, T=1.0)
+    c_cal = _apply_calibration(calibration, scores, c_uncal, args.signal)
 
     row_uncal = {
         "EM": metrics["exact"], "F1": metrics["f1"],
@@ -309,11 +410,12 @@ def cmd_report(args: argparse.Namespace) -> None:
     header = f"{'':12s}" + "".join(f"{k:>9s}" for k in row_uncal)
     print(header)
     print(f"{'uncalib.':12s}" + "".join(f"{v:>9.4f}" if isinstance(v, float) else f"{v:>9.2f}" for v in row_uncal.values()))
-    print(f"{'+T (T=' + format(T, '.2f') + ')':12s}"
+    print(f"{_calibration_label(calibration):12s}"
           + "".join(f"{v:>9.4f}" if isinstance(v, float) else f"{v:>9.2f}" for v in row_cal.values()))
 
     report = {
-        "temperature": T,
+        "method": calibration.get("method", "temperature scaling"),
+        "temperature": calibration.get("temperature"),
         "n": int(len(y)),
         "uncalibrated": row_uncal,
         "calibrated": row_cal,
@@ -335,13 +437,13 @@ def cmd_report(args: argparse.Namespace) -> None:
     print(f"Wrote report to {args.output}")
 
     if args.plot_dir is not None:
-        _plots(args.plot_dir, c_uncal, c_cal, y, T, row_uncal, row_cal)
+        _plots(args.plot_dir, c_uncal, c_cal, y, _calibration_label(calibration), row_uncal, row_cal)
 
     if failures:
         raise AssertionError("\n".join(failures))
 
 
-def _plots(plot_dir: Path, c_uncal, c_cal, y, T, row_uncal, row_cal) -> None:
+def _plots(plot_dir: Path, c_uncal, c_cal, y, cal_label: str, row_uncal, row_cal) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -354,7 +456,7 @@ def _plots(plot_dir: Path, c_uncal, c_cal, y, T, row_uncal, row_cal) -> None:
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.plot([0, 1], [0, 1], "k--", linewidth=1, label="perfect")
     for c, label, color in ((c_uncal, "uncalibrated", "tab:red"),
-                            (c_cal, f"calibrated (T={T:.2f})", "tab:blue")):
+                            (c_cal, f"calibrated ({cal_label})", "tab:blue")):
         rb = reliability_bins(c, y)
         ax.plot([b["mean_c"] for b in rb], [b["mean_y"] for b in rb],
                 "o-", color=color, label=label)
@@ -367,7 +469,7 @@ def _plots(plot_dir: Path, c_uncal, c_cal, y, T, row_uncal, row_cal) -> None:
     # 2. Risk-coverage curve with the 81.5 EM human ceiling and base-rate floor.
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for c, label, color in ((c_uncal, "uncalibrated", "tab:red"),
-                            (c_cal, f"calibrated (T={T:.2f})", "tab:blue")):
+                            (c_cal, f"calibrated ({cal_label})", "tab:blue")):
         rc = risk_coverage(c, y, coverages=np.arange(0.5, 1.001, 0.05))
         ax.plot([r["coverage"] for r in rc], [r["em"] for r in rc], "o-", color=color, label=label)
     ax.axhline(81.5, color="k", linestyle="--", linewidth=1, label="human ceiling 81.5 EM")
@@ -383,7 +485,7 @@ def _plots(plot_dir: Path, c_uncal, c_cal, y, T, row_uncal, row_cal) -> None:
     # 3. Confidence histograms.
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.hist(c_uncal, bins=bins, alpha=0.5, label="uncalibrated", color="tab:red")
-    ax.hist(c_cal, bins=bins, alpha=0.5, label=f"calibrated (T={T:.2f})", color="tab:blue")
+    ax.hist(c_cal, bins=bins, alpha=0.5, label=f"calibrated ({cal_label})", color="tab:blue")
     ax.set(xlabel="confidence", ylabel="questions", title="Confidence distribution (dev)")
     ax.legend()
     fig.tight_layout()
@@ -397,6 +499,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     fit = sub.add_parser("fit", help="fit T on the validation partition")
+    fit.add_argument("--method", choices=("temperature", "platt"), default="temperature",
+                     help="temperature scaling (1 param) or Platt scaling (2 params)")
+    fit.add_argument("--signal", choices=("prob", "v2"), default="prob",
+                     help="confidence signal to fit: v1 product (prob) or renormalised (v2)")
     fit.add_argument("--scores", type=Path, default=Path("runs/baseline/val-scores.npz"))
     fit.add_argument("--data", type=Path, default=Path("runs/baseline/validation-v1.1.json"))
     fit.add_argument("--predictions", type=Path, default=Path("runs/baseline/val-predictions.json"))
@@ -404,6 +510,8 @@ def main() -> None:
     fit.set_defaults(func=cmd_fit)
 
     report = sub.add_parser("report", help="report calibration metrics on dev")
+    report.add_argument("--signal", choices=("prob", "v2"), default="prob",
+                        help="confidence signal to report: v1 product (prob) or renormalised (v2)")
     report.add_argument("--scores", type=Path, default=Path("runs/baseline/scores.npz"))
     report.add_argument("--data", type=Path, default=Path("data/raw/dev-v1.1.json"))
     report.add_argument("--predictions", type=Path, default=Path("runs/baseline/predictions.json"))
