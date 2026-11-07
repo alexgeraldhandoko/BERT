@@ -96,3 +96,105 @@ def fit_temperature(logits: np.ndarray, y: np.ndarray) -> float:
         return binary_nll(logits / np.exp(log_t), y)
 
     f1, f2 = objective(x1), objective(x2)
+    
+def confidence_metrics(y: np.ndarray, probabilities: np.ndarray, bins: int = 15) -> dict:
+    y = np.asarray(y, dtype=np.float64)
+    p = np.clip(np.asarray(probabilities, dtype=np.float64), 1e-12, 1 - 1e-12)
+    n = len(y)
+    bin_id = np.minimum((p * bins).astype(int), bins - 1)
+    ece = 0.0
+    for b in range(bins):
+        mask = bin_id == b
+        if mask.any():
+            ece += float(mask.mean()) * abs(float(y[mask].mean() - p[mask].mean()))
+    return {
+        "n": n,
+        "accuracy_prevalence": float(y.mean()),
+        "mean_confidence": float(p.mean()),
+        "nll": binary_nll(np.log(p) - np.log1p(-p), y),
+        "brier": float(np.mean((p - y) ** 2)),
+        "ece_15_bins": float(ece),
+        "auroc": auc(y, p),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--examples", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--l2", type=float, default=0.01,
+                        help="fixed L2 penalty; choose in advance or using head_train only")
+    parser.add_argument("--steps", type=int, default=500)
+    parser.add_argument("--lr", type=float, default=0.01)
+    args = parser.parse_args()
+
+    with np.load(args.examples, allow_pickle=False) as data:
+        x_raw = data["X"].astype(np.float32)
+        y = data["y"].astype(np.int8)
+        part = data["part"].astype(str)
+        qids = data["qid"].astype(str)
+
+    train = part == "head_train"
+    calib = part == "calib"
+    if not train.any() or not calib.any() or np.any(train & calib):
+        raise ValueError("Expected disjoint, non-empty head_train and calib parts")
+    if not np.isin(y, (0, 1)).all():
+        raise ValueError("Labels must be binary")
+
+    # Fit feature normalization and head weights using head_train only.
+    mean, std = standardizer(x_raw[train])
+    x_train = transform(x_raw[train], mean, std)
+    x_calib = transform(x_raw[calib], mean, std)
+    w, bias, train_nll = fit_logistic(x_train, y[train], args.l2, args.steps, args.lr)
+
+    # Fit one scalar temperature on calibration logits; do not update the head here.
+    calib_logits = x_calib @ w + bias
+    temperature = fit_temperature(calib_logits, y[calib])
+    before = confidence_metrics(y[calib], sigmoid(calib_logits))
+    after = confidence_metrics(y[calib], sigmoid(calib_logits / temperature))
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = args.output_dir / "span_confidence_head.npz"
+    np.savez_compressed(
+        checkpoint,
+        w=w,
+        bias=np.float32(bias),
+        mean=mean,
+        std=std,
+        temperature=np.float32(temperature),
+        l2=np.float32(args.l2),
+        steps=np.int32(args.steps),
+        lr=np.float32(args.lr),
+    )
+    summary = {
+        "method": "post-hoc logistic confidence head on [CLS; mean-pooled rank-1 span; has_candidate]",
+        "training_questions": int(train.sum()),
+        "training_exact_matches": int(y[train].sum()),
+        "calibration_questions": int(calib.sum()),
+        "calibration_exact_matches": int(y[calib].sum()),
+        "l2": args.l2,
+        "steps": args.steps,
+        "learning_rate": args.lr,
+        "temperature": temperature,
+        "training_nll": train_nll,
+        "calibration_before_temperature": before,
+        "calibration_after_temperature": after,
+        "calibration_metrics_note": "Temperature was fit on this same calibration set; these are not an independent final estimate.",
+        "checkpoint": str(checkpoint),
+    }
+    (args.output_dir / "span_confidence_summary.json").write_text(
+        json.dumps(summary, indent=2, allow_nan=True) + "\n", encoding="utf-8"
+    )
+
+    print(f"Train: {int(train.sum())} questions, {int(y[train].sum())} exact matches")
+    print(f"Calibration: {int(calib.sum())} questions, {int(y[calib].sum())} exact matches")
+    print(f"Features: {x_raw.shape[1]}  fixed L2: {args.l2:g}  steps: {args.steps}")
+    print(f"Fitted temperature: {temperature:.6g}")
+    print("Calibration metrics before T:", json.dumps(before, sort_keys=True))
+    print("Calibration metrics after T: ", json.dumps(after, sort_keys=True))
+    print("Saved:", checkpoint)
+    print("Saved:", args.output_dir / "span_confidence_summary.json")
+
+
+if __name__ == "__main__":
+    main()
