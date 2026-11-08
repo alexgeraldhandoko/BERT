@@ -52,6 +52,34 @@ def _load_scores(path: Path) -> dict:
         return {key: data[key] for key in data.files}
 
 
+def _split_qids(path: Path, part: str) -> set[str]:
+    """Question IDs for one part of a held-out split file (e.g.
+    splits/heldout-v1.json, produced by qa_baseline.split_heldout on the
+    span-head branch, commit f24d049). The course protocol (binding, Nov 8)
+    requires temperature/Platt fits to use ONLY the 2,896 'calib' IDs and
+    forbids the forest/reranker from training on them."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    parts = doc.get("parts", doc)
+    if part not in parts:
+        raise ValueError(f"part {part!r} not in split file {path} "
+                         f"(has: {sorted(parts)})")
+    return set(parts[part]["ids"])
+
+
+def _filter_to_qids(scores: dict, y: np.ndarray, qids: set[str]) -> tuple[dict, np.ndarray, np.ndarray]:
+    """Restrict a scores cache (and labels) to the given question IDs.
+    Returns (scores, y, keep_mask). Raises if any requested ID is missing
+    from the cache — a silent subset would corrupt the fit protocol."""
+    keep = np.array([qid in qids for qid in scores["qid"]], dtype=bool)
+    missing = len(qids) - int(keep.sum())
+    if missing:
+        raise ValueError(
+            f"{missing} of {len(qids)} requested question IDs are not in the "
+            "scores cache; the split file and the cache disagree."
+        )
+    return {k: v[keep] for k, v in scores.items()}, y[keep], keep
+
+
 def _labels(scores: dict, examples: list[dict], predictions: dict[str, str]) -> np.ndarray:
     by_id = {example["id"]: example for example in examples}
     y = np.zeros(len(scores["qid"]), dtype=np.float64)
@@ -152,6 +180,14 @@ def cmd_target(args: argparse.Namespace) -> None:
     dev_preds = json.loads(args.predictions.read_text(encoding="utf-8"))
     y_val = _labels(val_scores, val_examples, val_preds)
     y_dev = _labels(dev_scores, dev_examples, dev_preds)
+
+    if args.part is not None:
+        # Same binding-protocol restriction as cmd_fit: the threshold is a
+        # fitted quantity, so it must come from the calib part only.
+        qids = _split_qids(args.val_split_file, args.part)
+        val_scores, y_val, _ = _filter_to_qids(val_scores, y_val, qids)
+        print(f"threshold fit restricted to {args.val_split_file}:{args.part}: "
+              f"{len(y_val)} questions")
 
     calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
 
@@ -279,6 +315,16 @@ def cmd_fit(args: argparse.Namespace) -> None:
     predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
     y = _labels(scores, flat, predictions)
 
+    fit_ids = None
+    if args.part is not None:
+        # Binding course protocol (2026-11-08): temperature/Platt fits use
+        # ONLY the calib part of the held-out split. Filter before fitting.
+        qids = _split_qids(args.split_file, args.part)
+        scores, y, _ = _filter_to_qids(scores, y, qids)
+        flat = [ex for ex in flat if ex["id"] in qids]
+        fit_ids = f"{args.split_file}:{args.part}"
+        print(f"fit restricted to {fit_ids}: {len(y)} questions")
+
     if args.signal == "v2":
         # rows with no legal spans (empty context mask) have no v2 probability;
         # exclude them from the fit and say how many (dev has none, val has 3).
@@ -293,6 +339,7 @@ def cmd_fit(args: argparse.Namespace) -> None:
     result = {
         **fit,
         "fitted_on": str(args.data),
+        "fitted_ids": fit_ids,
         "n": int(len(y)),
         "base_rate": float(y.mean()),
         "threshold": 0.5,
@@ -507,6 +554,10 @@ def main() -> None:
     fit.add_argument("--data", type=Path, default=Path("runs/baseline/validation-v1.1.json"))
     fit.add_argument("--predictions", type=Path, default=Path("runs/baseline/val-predictions.json"))
     fit.add_argument("--output", type=Path, default=Path("runs/baseline/calibration.json"))
+    fit.add_argument("--split-file", type=Path, default=Path("splits/heldout-v1.json"),
+                     help="held-out split file (parts head_train/calib/test)")
+    fit.add_argument("--part", choices=("head_train", "calib", "test"), default=None,
+                     help="restrict the fit to this split part (course protocol: calib)")
     fit.set_defaults(func=cmd_fit)
 
     report = sub.add_parser("report", help="report calibration metrics on dev")
@@ -533,6 +584,9 @@ def main() -> None:
     target.add_argument("--predictions", type=Path, default=Path("runs/baseline/predictions.json"))
     target.add_argument("--calibration", type=Path, default=Path("runs/baseline/calibration.json"))
     target.add_argument("--target-error", type=float, default=0.05)
+    target.add_argument("--val-split-file", type=Path, default=Path("splits/heldout-v1.json"))
+    target.add_argument("--part", choices=("head_train", "calib", "test"), default=None,
+                        help="restrict the threshold fit to this split part (course protocol: calib)")
     target.add_argument("--output", type=Path, default=Path("runs/baseline/target-report.json"))
     target.set_defaults(func=cmd_target)
 

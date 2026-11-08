@@ -7,13 +7,20 @@ deadline: **report + slides + video due 12 Nov** (grading 60% content / 30%
 presentation / 10% novelty; 4-page ACL short paper).
 
 **Read in order:** this file → `results/2026-10-28-temperature-findings.md`
-(plain-language) → `results/2026-10-27-confidence-v1.md` §10 (v2/Platt table).
+(plain-language) → `results/2026-10-27-confidence-v1.md` §11 (BINDING
+protocol table) and §10 (superseded full-val table, kept as provenance).
 
-**Addendum 2026-11-08:** the v2+Platt cell was run post-hoc this session
-(see §2, end) — Brier 0.1420: beats v2-raw, does NOT beat Platt-on-v1;
-criterion pre-declared and honestly failed. Experiments are now closed for
-good. The §1 table below gains one row (labelled post-hoc); everything else
-unchanged.
+**Addendum 2026-11-08 — PROTOCOL CHANGE (binding).** The TA's split spec
+arrived after the v2+Platt run: ALL temperature/Platt fits use ONLY the
+2,896 calib IDs (exactly the `calib` part of Ziying's
+`splits/heldout-v1.json`, commit `f24d049`); the forest/reranker train on
+the 5,845 head_train IDs; final comparison on the 10,570 dev IDs. Everything
+was refit under `--part calib` (§11 of the technical report): Platt-on-v1
+still best fitted row (dev Brier 0.1410, all gates pass); v2-raw now only
+0.0046 behind with ZERO parameters; T still fails on both signals; both
+Platt half-split gates fail at n=2,896 (recorded, not retuned). The §1
+table's fitted rows are SUPERSEDED — quote §11 numbers. Alexander's Kamath
+row must be re-measured on head_train (his 0.1388 was a full-val fit).
 
 ---
 

@@ -353,6 +353,62 @@ half-split disagreement that vanished after the fix). Dev has no such rows.
 The chunked `renormalised_probabilities` keeps the fit at ~8 min CPU; the
 report at ~30 s.
 
+## 11. Binding-protocol refit (2026-11-08): calib-only fits SUPERSEDE the full-val table
+
+After §10 was written, the TA's data-split spec arrived (binding): the 8,741
+held-out questions divide into **5,845 head_train** (forest/reranker
+training) and **2,896 calib** (ALL temperature/Platt fits); final comparison
+on the 10,570 dev IDs. The 2,896 calib IDs are exactly the `calib` part of
+Ziying's `splits/heldout-v1.json` (branch `exp/span-conditioned-confidence`,
+commit `f24d049`, seed 42, split by article, disjoint; her head_train+test =
+5,845). Our full-val fits (§2–§10) saw 3× the sanctioned data and are
+superseded for the report; they are kept here as provenance.
+
+Refit with `calibrate fit --part calib` (new `--split-file/--part` filter;
+43 tests green). Fits (n=2,896):
+
+| fit | T-v1 | Platt-v1 | T-v2 | Platt-v2 |
+|---|---|---|---|---|
+| parameters | T=1.04 | a=0.7495, b=+0.2141 | T=1.10 | a=0.7452, b=+0.0817 |
+| half-split | ΔT=0.06 | Δa=0.052, **FAIL** | ΔT=0.05 | Δa=0.068, **FAIL** |
+
+Dev report (post-hoc reads, protocol-forced; uncalibrated rows identical to
+§10):
+
+| dev | mean_c | Brier | BSS | ECE | NLL | gates |
+|---|---|---|---|---|---|---|
+| v1 raw | 0.6503 | 0.1523 | +0.0617 | 0.1457 | 0.4548 | — |
+| v1 + T (1.04, calib-fit) | 0.6374 | 0.1564 | +0.0366 | 0.1586 | 0.4654 | FAIL 2,3 |
+| **v1 + Platt (calib-fit)** | 0.6722 | **0.1410** | **+0.1314** | 0.1239 | **0.4331** | PASS all |
+| v2 raw (no fitted params) | 0.6789 | 0.1456 | +0.1032 | **0.1175** | 0.4387 | — |
+| v2 + T (1.10, calib-fit) | 0.6496 | 0.1534 | +0.0553 | 0.1464 | 0.4581 | FAIL 2,3 |
+| v2 + Platt (calib-fit) | 0.6744 | 0.1438 | +0.1144 | 0.1216 | 0.4395 | FAIL 2 |
+
+Readings (what changed vs the full-val fits):
+
+1. **Every conclusion survives; every fitted number moved.** T still fails
+   to transfer on both signals (worse than ever: Brier +0.004 over raw).
+   Platt-on-v1 is still the best fitted row and still passes all gates —
+   but its edge shrank (0.1391 → 0.1410) and the parameter-free v2-raw now
+   sits only 0.0046 behind it (was 0.0065).
+2. **v2+Platt is now a wash on its own signal**: it improves Brier/ECE over
+   v2-raw but worsens NLL (0.4395 > 0.4387), so gate 2 fails. With 2,896
+   fit rows, the 2-parameter fit on the renormalised signal buys nothing
+   the renormalisation itself didn't already buy.
+3. **Both Platt half-split gates FAIL at n=2,896** (Δa=0.052, 0.068 vs the
+   ±0.05 tolerance). The tolerance was calibrated on 8.7k rows; at 2.9k the
+   disagreement is consistent with sampling noise, not overfitting (the
+   full-val fits had Δa=0.036/0.049). We record the failure rather than
+   retune the gate post-hoc; the report flags fit uncertainty at n=2,896.
+4. **Error budget under the binding protocol**: threshold fitted on calib
+   only (`calibrate target --part calib`): v1 prob signal reaches **1.79%
+   error at 23.8% coverage** on dev (was 1.87%/25.4% from the full-val
+   threshold).
+5. **Kamath's cited row must be re-measured**: the course forbids the forest
+   from training on calib IDs, so Alexander's forest must train on the
+   5,845 head_train IDs (Ziying's head_train+test). His 0.1388 was fitted
+   under the old protocol; treat it as indicative until re-measured.
+
 ## 8. Reproduce
 
 ```bash
@@ -383,6 +439,14 @@ PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate report \
   --signal v2 --calibration runs/baseline/calibration-platt-v2.json \
   --output runs/baseline/calibration-report-platt-v2.json \
   --plot-dir runs/baseline/plots-platt-v2
+
+# BINDING protocol (2026-11-08): fits restricted to the 2,896 calib IDs.
+# Pattern for all four fits; see section 11 for the full command list.
+PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate fit \
+  --method platt --signal prob --part calib \
+  --output runs/baseline/calibration-calib-platt-v1.json
+PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate target \
+  --part calib --output runs/baseline/target-report-calib.json
 ```
 
 ## 9. Caveats

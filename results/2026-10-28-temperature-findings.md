@@ -114,11 +114,24 @@ be quoted from the v1 signal.
 Reproduce: `calibrate fit --method platt`, `calibrate fit --signal v2`,
 `calibrate report --signal v2` (commands in the technical report §10).
 
+**Update 2026-11-08 (binding protocol).** The TA's split spec arrived: ALL
+temperature/Platt fits must use only 2,896 calib IDs (not the full 8,741 val
+partition we had used). We refit everything on the calib IDs — see §11 of
+the technical report. What changes: Platt's edge shrinks (v1+Platt dev
+Brier 0.1391 → 0.1410) and the parameter-free renormalised signal now sits
+only 0.0046 behind the best 2-parameter calibrator; v2+Platt becomes a wash
+on its own signal (improves Brier/ECE, worsens NLL); the temperature still
+fails to transfer, on both signals, now by a wider margin. The story is
+*stronger* under the honest protocol: the cheapest fix (renormalisation,
+zero fitted parameters) nearly matches the best learned calibrator.
+
 **Update 2026-11-08.** The last empty cell in the grid — Platt fitted on the
-renormalised signal — was run afterwards, labelled post-hoc (dev's one-shot
-read was already spent). It helps but does not win: dev Brier 0.1420, better
-than v2-raw (0.1456) on every proper score and the best ECE in the table
-(0.1152), but the pre-declared target (beat Platt-on-v1's 0.1391) was NOT
-met. The plain-language conclusion stands: renormalisation is the best fix
-that needs no fitted parameters; Platt on the original signal is the best
-fix that uses two.
+renormalised signal — was run beforehand, labelled post-hoc (dev's one-shot
+read was already spent). Under the full-val protocol it helped but did not
+win: dev Brier 0.1420, better than v2-raw (0.1456) on every proper score and
+the best ECE in the table (0.1152), but the pre-declared target (beat
+Platt-on-v1's 0.1391) was NOT met. Under the binding calib-only refit it is
+a wash (§11): with 2,896 fit rows, Platt on the renormalised signal buys
+nothing the renormalisation itself didn't already buy. The plain-language
+conclusion stands: renormalisation is the best fix that needs no fitted
+parameters; Platt on the original signal is the best fix that uses two.
