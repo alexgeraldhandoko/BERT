@@ -151,12 +151,18 @@ rigour:
 
 ## 6. Definition of done for the v2 session
 
-- [ ] `calibrate report` prints v1 and v2 rows on dev; Z computed over the full
-      legal grid; v2 outcome (drop or no-drop) recorded in both results docs.
-- [ ] `calibrate fit --method platt` exists; half-split recorded; 29+ tests
-      green including new platt + orientation tests.
-- [ ] §3.4 table regenerated from the pipeline; Platt row relabelled.
-- [ ] Decision recorded: fresh confirmation split (yes/no, with reasoning).
-- [ ] `results/` updated; everything pushed; cluster untouched (or, if a fresh
-      split was trained: new jobs logged here with IDs and artifacts).
-- [ ] Paper skeleton exists (outline at minimum) with the citation list from §1.
+Executed 2026-11-07 (commit `86adbdf`):
+
+- [x] `calibrate report` prints v1 and v2 rows on dev; Z computed over the full
+      legal grid; v2 outcome recorded: **prediction CONFIRMED** (v2-raw Brier
+      0.1456 < v1-raw 0.1523; v2+T hollow pass, see §10 of the technical doc).
+- [x] `calibrate fit --method platt` exists; half-split recorded (Δa=0.036,
+      Δb=0.016, pass); 38 tests green (Platt recovery, dispatch, v2 equivalence,
+      orientation).
+- [x] §3.4 table regenerated from the pipeline; Platt row relabelled as
+      measured/post-hoc.
+- [x] Decision recorded: fresh confirmation split **declined for this pass**
+      (post-hoc label instead; deadline 12 Nov).
+- [x] `results/` updated; everything pushed (`86adbdf`); cluster untouched.
+- [ ] Paper skeleton — deferred by Kea ("focus on the experiments"); outline
+      approved in principle (5-part, in `plans/kea-next-pass.md`).
