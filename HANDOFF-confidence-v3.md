@@ -6,8 +6,14 @@ is complete. What remains is **integration and writing**, against a hard
 deadline: **report + slides + video due 12 Nov** (grading 60% content / 30%
 presentation / 10% novelty; 4-page ACL short paper).
 
-Read in order: this file → `results/2026-10-28-temperature-findings.md`
+**Read in order:** this file → `results/2026-10-28-temperature-findings.md`
 (plain-language) → `results/2026-10-27-confidence-v1.md` §10 (v2/Platt table).
+
+**Addendum 2026-11-08:** the v2+Platt cell was run post-hoc this session
+(see §2, end) — Brier 0.1420: beats v2-raw, does NOT beat Platt-on-v1;
+criterion pre-declared and honestly failed. Experiments are now closed for
+good. The §1 table below gains one row (labelled post-hoc); everything else
+unchanged.
 
 ---
 
@@ -22,6 +28,7 @@ val partition (8,741, seed 42, protocol identical to Alexander's Kamath run):
 | + temperature (val-fit) | 1 | 0.1543 | +0.050 | 0.1522 | 0.4599 | 0.8293 |
 | **v2 renormalised (raw)** | 0 | **0.1456** | **+0.103** | **0.1175** | **0.4387** | 0.8187 |
 | v2 + temperature (val-fit) | 1 | 0.1534 | +0.055 | 0.1464 | 0.4581 | 0.8187 |
+| **v2 + Platt (val-fit)** — post-hoc, single confirmation | 2 | 0.1420 | +0.126 | 0.1152 | 0.4348 | 0.8187 |
 | **Platt on v1 (val-fit)** | 2 | **0.1391** | **+0.143** | 0.1171 | 0.4280 | 0.8293 |
 | Kamath forest (Alexander, cited) | ~200 trees | 0.1388 | — | 0.1267 | 0.4300 | 0.8357 |
 
@@ -55,6 +62,16 @@ Headline sentences, ready to use:
   excludes and prints them; `fit_temperature_v2` raises on NaN. Dev has zero.
 - Tests: **38 passed** (Platt recovery/dispatch, v2 chunked-vs-slow equivalence,
   distribution property, signal orientation contract incl. v2).
+- **Addendum 2026-11-08 (v3 session):** ran the missing grid cell — Platt
+  fitted on the v2 signal (`calibrate fit --method platt --signal v2` →
+  a=0.7601, b=+0.1126, n=8,738, 3 NaN rows excluded; half-split Δa=0.0492 —
+  just inside ±0.05 — Δb=0.0394, pass). Dev report (post-hoc, single
+  confirmation): Brier 0.1420, BSS +0.1256, ECE 0.1152, NLL 0.4348; all three
+  report gates pass; risk–coverage identical to v2-raw (Platt is monotone).
+  Pre-declared criterion (Brier < 0.1391) **NOT met** — Platt-on-v1 remains
+  the headline. Outputs: `runs/baseline/calibration-platt-v2.json`,
+  `calibration-report-platt-v2.json`, `plots-platt-v2/`. **Experiments now
+  closed for good; writing sprint starts.**
 
 ## 3. Team state (from the Nov 7 Telegram export + branches)
 

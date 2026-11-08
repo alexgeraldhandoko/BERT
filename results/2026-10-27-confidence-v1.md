@@ -308,6 +308,7 @@ half-split T_A=T_B=1.10, Δ=0) then `calibrate report --signal v2` on dev:
 | v1 raw | 0.6503 | 0.1523 | +0.0617 | 0.1457 | 0.4548 | 0.8293 |
 | v2 raw (no fitted params) | **0.6789** | **0.1456** | **+0.1032** | **0.1175** | **0.4387** | 0.8187 |
 | v2 + T (1.10) | 0.6496 | 0.1534 | +0.0553 | 0.1464 | 0.4581 | 0.8187 |
+| v2 + Platt (a=0.76, b=+0.11) — **post-hoc, single confirmation** | 0.6808 | 0.1420 | +0.1256 | 0.1152 | 0.4348 | 0.8187 |
 | Platt (v1 signal) | 0.6789 | **0.1391** | +0.1432 | 0.1171 | 0.4280 | 0.8293 |
 | Kamath forest (cited) | 0.6699 | 0.1388 | — | 0.1267 | 0.4300 | 0.8357 |
 
@@ -330,6 +331,19 @@ Readings:
    best parameter-free signal (0.1456). Kamath's forest (cited from
    `results/kamath-summary.json`, identical protocol) sits at 0.1388 — a
    2-parameter affine map matches a 200-tree forest.
+5. **v2 + Platt (run 2026-11-08, post-hoc, single confirmation — dev one-shot
+   was already spent): the composition helps but does not win.** Pre-declared
+   criterion (dev Brier < 0.1391, fixed before the run) **NOT met**: 0.1420.
+   v2+Platt beats v2-raw on every proper score (renormalisation and the Platt
+   offset do partially compose) and posts the best ECE in the table (0.1152),
+   but Platt on the v1 signal remains the best 2-parameter row — the v1
+   signal's extra ranking information (AUC 0.8293 vs 0.8187) is worth more
+   than the renormalised level. Platt is monotone, so the ranking is v2's:
+   risk–coverage is identical to v2-raw in
+   `runs/baseline/calibration-report-platt-v2.json`. Fit: a=0.7601,
+   b=+0.1126 (n=8,738, 3 NaN rows excluded); half-split Δa=0.0492 (just
+   inside the ±0.05 tolerance — the v2 slope is less stable across article
+   halves than v1's 0.036), Δb=0.0394, pass.
 
 Engineering notes (recorded for reproducibility): 3 val rows have empty context
 masks (no legal spans) and must be excluded from the v2 fit (`calibrate fit`
@@ -361,6 +375,14 @@ PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate target \
   --data data/raw/dev-v1.1.json --predictions runs/baseline/predictions.json \
   --calibration runs/baseline/calibration.json --target-error 0.05 \
   --output runs/baseline/target-report.json
+
+# v2 + Platt (post-hoc run 2026-11-08; fit on val, report on dev)
+PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate fit \
+  --method platt --signal v2 --output runs/baseline/calibration-platt-v2.json
+PYTHONPATH=src .venv/bin/python -m qa_baseline.calibrate report \
+  --signal v2 --calibration runs/baseline/calibration-platt-v2.json \
+  --output runs/baseline/calibration-report-platt-v2.json \
+  --plot-dir runs/baseline/plots-platt-v2
 ```
 
 ## 9. Caveats
