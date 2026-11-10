@@ -48,11 +48,25 @@ coverage / 1.79% achieved)."
 **3. Alexander** — saw your `68fab11` push: forest retrained on head_train
 (5,845) is exactly what the protocol needed, and your shared
 `splits/confidence-comparison-v1.json` matches the IDs I used byte-for-byte
-(verified — my refits stand). Two small asks: (a) confirm the ECE in your
-summary is 10 equal-width bins, so I can footnote the binning difference
-against our 15 equal-mass; (b) your raw-softmax row differs slightly from
-mine (Brier 0.1535 vs 0.1523) — I'll cite your forest row from your
-pipeline as-is (labelled), just confirm that's the final number.
+(verified — my refits stand). But a bigger issue, raised before submission:
+**the paper draft's "Platt-scaled Kamath" numbers are untraceable.** The
+ ideation PDF (§4.1, Table 4) reports a 300-tree/depth-10 forest (Brier
+0.1384) with T=1.0734 and Platt a=0.9037/b=+0.0786 fitted on calib (dev
+Brier 0.1360) — none of that exists in any branch (your committed run is
+200 trees, no scaling, 0.1405; I searched every ref). Please commit:
+(a) the 300-tree config change, (b) the scaling-fitting code, (c) the
+calibration JSON with a/b/T + half-split, (d) the dev summary. Easiest
+path: export the forest's per-question calib+dev probabilities and I'll
+run them through our tested Platt machinery (`calibrate fit --method
+platt`) so the row gets the same gates and provenance as everything else.
+Same for LIMECAL (Nicholas/Sandy): no code or artifacts in any branch.
+Until then the draft's headline row is a chat-only number — the exact
+failure mode we swore off in session 2. Also confirm: ECE binning in the
+draft is 15 equal-WIDTH; ours is 15 equal-mass (documented reason:
+confidences cluster near 0.8, equal-width goes sparse) — one convention
+must win. And the draft's raw row (Brier 0.1535, EM 79.66) vs ours
+(0.1523, EM 79.60) reflects the two different postprocess fixes — that
+reconciliation is now the blocking issue for a consistent camera-ready.
 
 Full technical docs are on branch `experiment/temperature-confidence`:
 `results/2026-10-27-confidence-v1.md` (§11 = binding-protocol table, §10 =

@@ -28,6 +28,21 @@ with our calib-fit Platt (0.1410). Ziying recorded a compliant post-hoc
 confidence head (train 5,845 / temp 2,896): an honest negative — loses to
 the raw signal on every metric (Brier 0.1635, AUROC 0.776 vs 0.835).
 
+**TRACEABILITY GAP (found 2026-11-08, highest priority):** the team's paper
+draft (`paper_sources/CS4248 Ideation-1.pdf`) reports a "Platt-scaled
+Kamath" headline (300-tree/depth-10 forest, T=1.0734, Platt a=0.9037/
+b=+0.0786, dev Brier 0.1360) and a LIMECAL-style estimator — **neither
+exists in any branch** (verified: searched every ref for the config and
+the exact numbers; the only Platt code in the repo is ours). The draft's
+best row is currently a chat-only number. Needs: committed config +
+scaling code + calibration JSON + dev summary from whoever ran it, or a
+re-run through a traceable pipeline (offer: our `calibrate fit --method
+platt` can consume exported forest probabilities directly). Related
+draft-vs-repo discrepancies to reconcile: ECE equal-width (draft) vs
+equal-mass (ours); raw-row extraction (their 0.1535/EM 79.66 vs our
+0.1523/EM 79.60 — the two postprocess fixes differ); forest config
+(300/10 vs committed 200).
+
 ---
 
 ## 1. State of the results (all pipeline-reproduced, commit `86adbdf`)
