@@ -1,0 +1,18 @@
+{
+  "method": "temperature scaling",
+  "temperature": 1.1,
+  "fitted_on": "runs/baseline/validation-v1.1.json",
+  "fitted_ids": "splits/heldout-v1.json:calib",
+  "n": 2896,
+  "base_rate": 0.6826657458563536,
+  "threshold": 0.5,
+  "package_versions": {
+    "python": "3.14.6",
+    "numpy": "2.5.4"
+  },
+  "half_split": {
+    "T_A": 1.1500000000000001,
+    "T_B": 1.1000000000000003,
+    "delta": 0.04999999999999982
+  }
+}

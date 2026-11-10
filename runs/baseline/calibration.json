@@ -1,0 +1,17 @@
+{
+  "method": "temperature scaling",
+  "temperature": 1.02,
+  "fitted_on": "runs/baseline/validation-v1.1.json",
+  "n": 8741,
+  "base_rate": 0.6994623040842008,
+  "threshold": 0.5,
+  "package_versions": {
+    "python": "3.14.6",
+    "numpy": "2.5.4"
+  },
+  "half_split": {
+    "T_A": 1.03,
+    "T_B": 1.01,
+    "delta": 0.020000000000000018
+  }
+}

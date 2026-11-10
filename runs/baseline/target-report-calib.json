@@ -1,0 +1,30 @@
+{
+  "target_error": 0.05,
+  "method": "temperature scaling",
+  "temperature": 1.02,
+  "fitted_on": "runs/baseline/validation-v1.1.json",
+  "reported_on": "data/raw/dev-v1.1.json",
+  "signals": [
+    {
+      "signal": "prob",
+      "threshold": 0.9311207160197907,
+      "dev_coverage": 0.2380321665089877,
+      "dev_achieved_error": 0.0178855325914149,
+      "dev_n_retained": 2516
+    },
+    {
+      "signal": "margin",
+      "threshold": 3.710189461708069,
+      "dev_coverage": 0.2107852412488174,
+      "dev_achieved_error": 0.018850987432674993,
+      "dev_n_retained": 2228
+    },
+    {
+      "signal": "entropy",
+      "threshold": -0.18328022341876032,
+      "dev_coverage": 0.23812677388836329,
+      "dev_achieved_error": 0.017083829956297203,
+      "dev_n_retained": 2517
+    }
+  ]
+}

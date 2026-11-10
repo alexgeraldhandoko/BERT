@@ -1,0 +1,27 @@
+{
+  "method": "platt",
+  "a": 0.7495329294891611,
+  "b": 0.21406507173214726,
+  "fitted_on": "runs/baseline/validation-v1.1.json",
+  "fitted_ids": "splits/heldout-v1.json:calib",
+  "n": 2896,
+  "base_rate": 0.6826657458563536,
+  "threshold": 0.5,
+  "package_versions": {
+    "python": "3.14.6",
+    "numpy": "2.5.4"
+  },
+  "half_split": {
+    "a_A": 0.7178025291562744,
+    "a_B": 0.7701099500464545,
+    "b_A": 0.14388108367748326,
+    "b_B": 0.2690109343690673,
+    "delta_a": 0.052307420890180145,
+    "delta_b": 0.12512985069158405,
+    "tolerance": {
+      "a": 0.05,
+      "b": 0.1
+    },
+    "pass": false
+  }
+}
