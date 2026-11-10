@@ -82,3 +82,12 @@ through `main` blindly.
 
 *Kea: after sending, record their answers at the top of
 `HANDOFF-confidence-v3.md` §3.*
+
+**Branch announcement (add to the thread):** our calibration branch is now on
+upstream: `experiment/temperature-confidence` @ `a94503f`. It contains: the
+binding-protocol refits (`calibrate fit --part calib`, 43 tests), all four
+calib-fit calibration/report JSONs + error-budget report as committed
+provenance, the report-section draft, protocol message, video script, and
+the traceability-gap note re: Platt-scaled Kamath / LIMECAL. Fetch and see
+`results/2026-10-27-confidence-v1.md` §11 first. Merging to main is a
+separate later decision (order per handoff: alex → ziying → ours).

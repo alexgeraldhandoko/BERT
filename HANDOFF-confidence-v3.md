@@ -114,6 +114,15 @@ merged**; `main` is still the untouched scaffold. Kea's split-protocol answer
 (full-val fit / dev report) was given in chat but not yet acknowledged by the
 teammates.
 
+**Branch pushed to upstream (2026-11-08):** `experiment/temperature-confidence`
+@ `a94503f` on the shared origin (alexgeraldhandoko/BERT — single shared
+repo, no fork layer). On the remote now: binding-protocol code + refits,
+all calib-fit provenance JSONs (fits, reports, error budget, superseded
+full-val fits), report-section draft, protocol message, video script,
+HTML report, traceability-gap note. `main` untouched at `c761a35`;
+merging is a separate later decision (order: alex → ziying → ours).
+Teammates: plain `git fetch` to see it.
+
 ## 4. What remains before 12 Nov
 
 1. **Send the protocol message** (Kea, today): propose the §1 table as the
