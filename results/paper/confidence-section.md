@@ -73,7 +73,10 @@ renormalisation, and Platt on the renormalised signal buys nothing further
 (it improves Brier/ECE marginally but worsens NLL). Calibration here is a
 level shift, not complex structure — a 2-parameter affine map on the model's
 own span probability, matching a 200-tree random-forest estimator (Kamath et
-al., 2020) evaluated under the same protocol by a teammate.
+al., 2020) evaluated under the same protocol by a teammate (0.1405), while a
+team-mate's learned span-conditioned head with 1,537 features (trained on
+head_train, temperature on calib) fails to beat the raw signal at all
+(Brier 0.1635, AUROC 0.776 vs 0.835).
 
 **(d) Ranking was never the problem.** Raw AUC is 0.83, and the practical
 use case works uncalibrated: a threshold set on the calib subset for a 5%
@@ -91,13 +94,19 @@ Calibration corrects the *level* of trust, not the *order*.
 | v2 + temperature (calib-fit) | 1 | 0.1534 | +0.055 | 0.1464 | 0.4581 | 0.8187 |
 | v2 + Platt (calib-fit) | 2 | 0.1438 | +0.114 | 0.1216 | 0.4395 | 0.8187 |
 | **v1 + Platt (calib-fit)** | 2 | **0.1410** | **+0.131** | 0.1239 | **0.4331** | 0.8293 |
-| Kamath forest (teammate, cited) | ~200 trees | 0.1388* | — | 0.1267 | 0.4300 | 0.8357 |
+| Kamath forest (teammate, head_train-fit) | ~200 trees | 0.1405 | — | 0.1292* | 0.4371 | 0.8344 |
+| Span-conditioned learned head (teammate) | ~1.5k feats | 0.1635 | — | 0.1592 | 0.4973 | 0.7756 |
 
-*Fitted under a preliminary protocol; to be re-measured on the 5,845
-head_train IDs for the final table. BSS is skill against the base-rate floor
-`base(1−base)`; ECE uses 15 equal-mass bins and is diagnostic only (not
-proper). EM/F1 identical across all rows (monotone maps; asserted in the
-pipeline).
+*Alexander's ECE uses 10 bins (not our 15 equal-mass) and his confidence
+extraction differs in window details — cite his row from his pipeline
+(`results/kamath-summary.json` @ `68fab11`, head_train-fit, fully
+binding-compliant). Ziying's span-conditioned head (logistic, 1,537
+features, trained on head_train, temperature on calib) is her recorded
+honest negative: it loses to the raw signal on every score. Both teammates'
+rows now sit under the same binding protocol as ours. BSS is skill against
+the base-rate floor `base(1−base)`; ECE uses 15 equal-mass bins and is
+diagnostic only (not proper). EM/F1 identical across all rows (monotone
+maps; asserted in the pipeline).
 
 **Headline:** the cheapest effective fix (renormalisation over legal spans)
 needs no fitted data at all and comes within 0.005 Brier of the best learned
@@ -138,8 +147,8 @@ low-dimensional — a level shift, not complex structure.
   2-parameter affine map)
 - **Kamath, A., Jia, R., Liang, P. 2020. *Selective Question Answering under
   Domain Shift.* ACL.** (selective-prediction confidence baseline; cite our
-  teammate Alexander's implementation `alex/baseline_kamath`, to be
-  re-measured on the 5,845 head_train IDs under the binding protocol)
+  teammate Alexander's implementation `alex/baseline_kamath`, retrained on
+  the 5,845 head_train IDs under the binding protocol)
 - **Zhang, M. et al. 2021. *Knowing What You Know: Calibrating Confidence
   for Extractive QA* (arXiv:2106.01494).** Differentiation: they train an
   additional learned CLS head (new capacity, retraining); we calibrate the

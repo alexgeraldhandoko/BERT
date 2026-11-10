@@ -20,7 +20,13 @@ still best fitted row (dev Brier 0.1410, all gates pass); v2-raw now only
 0.0046 behind with ZERO parameters; T still fails on both signals; both
 Platt half-split gates fail at n=2,896 (recorded, not retuned). The §1
 table's fitted rows are SUPERSEDED — quote §11 numbers. Alexander's Kamath
-row must be re-measured on head_train (his 0.1388 was a full-val fit).
+row is now binding-compliant too: he retrained on head_train @ `68fab11`
+(Brier 0.1405, ECE 0.1292 10-bin, NLL 0.4371, AUC 0.8344) and added the
+team-canonical split `splits/confidence-comparison-v1.json` (verified: its
+calib IDs are identical to ours, so our refits stand). Still a dead heat
+with our calib-fit Platt (0.1410). Ziying recorded a compliant post-hoc
+confidence head (train 5,845 / temp 2,896): an honest negative — loses to
+the raw signal on every metric (Brier 0.1635, AUROC 0.776 vs 0.835).
 
 ---
 

@@ -404,10 +404,19 @@ Readings (what changed vs the full-val fits):
    only (`calibrate target --part calib`): v1 prob signal reaches **1.79%
    error at 23.8% coverage** on dev (was 1.87%/25.4% from the full-val
    threshold).
-5. **Kamath's cited row must be re-measured**: the course forbids the forest
-   from training on calib IDs, so Alexander's forest must train on the
-   5,845 head_train IDs (Ziying's head_train+test). His 0.1388 was fitted
-   under the old protocol; treat it as indicative until re-measured.
+5. **Kamath's row is now binding-compliant (upstream update, Nov 8):**
+   Alexander retrained the forest on the 5,845 head_train IDs
+   (`alex/baseline_kamath` @ `68fab11`, summary records
+   `training_questions: 5845`): dev Brier **0.1405**, ECE 0.1292 (10 bins),
+   NLL 0.4371, AUC 0.8344 — still a dead heat with our calib-fit Platt
+   (0.1410, Δ 0.0005), both sides now under the binding protocol. He also
+   added the team-canonical split `splits/confidence-comparison-v1.json`;
+   verified its calib IDs are identical to the ones used here (2,896),
+   head_train = 5,845 = Ziying's head_train+test. Caveats when citing: his
+   ECE uses 10 bins (not our 15 equal-mass) and his raw-softmax row differs
+   slightly from ours (Brier 0.1535 vs 0.1523, AUC 0.8354 vs 0.8293) — his
+   confidence extraction runs on the n-best top-1 span probability with his
+   own window handling; quote his row from his pipeline, labelled as such.
 
 ## 8. Reproduce
 

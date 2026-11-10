@@ -32,22 +32,27 @@ Brier of the best learned calibrator (2 parameters); the 1-parameter
 temperature is an honest negative (base-rate mismatch between held-out and
 dev, diagnosed and measured).
 
-**2. Ziying** — does your span-head confidence output want to join this
-table? Also: your split file is now the canonical one (`splits/heldout-v1.json`) —
-the course head_train (5,845) = your head_train + your test; your calib
-(2,896) is the course calib. If your confidence output joins, tell me which
-row/label and I'll add it. Either way I'll write the accuracy section to
-hand off to your reranker story: "the reranker improves EM/F1 (+1.49 EM);
-the calibration layer attaches a confidence with a guaranteed error budget
-(5% target holds on dev at 23.8% coverage / 1.79% achieved)."
+**2. Ziying** — saw your span-conditioned confidence head result (trained
+head_train, temperature on calib — fully compliant, thank you). It's an
+honest negative: raw beats it on AUROC/Brier/NLL. I'd like to include it in
+the comparison table as the learned-head row (labelled as your result) — it
+strengthens the paper's claim that calibration here is low-dimensional.
+OK to include? Also: your split file is now the canonical one
+(`splits/heldout-v1.json` → Alexander's shared file references it); the
+course head_train (5,845) = your head_train + your test. Either way I'll
+write the accuracy section to hand off to your reranker story: "the
+reranker improves EM/F1 (+1.49 EM); the calibration layer attaches a
+confidence with a guaranteed error budget (5% target holds on dev at 23.8%
+coverage / 1.79% achieved)."
 
-**3. Alexander** — two things. (a) The course forbids the forest from
-training on the calib IDs, so please retrain the Kamath forest on the
-5,845 head_train IDs (= your head_train + test from the same split file)
-and send me the new summary — your 0.1388 was fitted under the old
-protocol, so the cited row needs the new number. (b) Confirm you're using
-the same baseline checkpoint (78,858 QA_train, seed 42) so the comparison
-is apples-to-apples on dev.
+**3. Alexander** — saw your `68fab11` push: forest retrained on head_train
+(5,845) is exactly what the protocol needed, and your shared
+`splits/confidence-comparison-v1.json` matches the IDs I used byte-for-byte
+(verified — my refits stand). Two small asks: (a) confirm the ECE in your
+summary is 10 equal-width bins, so I can footnote the binning difference
+against our 15 equal-mass; (b) your raw-softmax row differs slightly from
+mine (Brier 0.1535 vs 0.1523) — I'll cite your forest row from your
+pipeline as-is (labelled), just confirm that's the final number.
 
 Full technical docs are on branch `experiment/temperature-confidence`:
 `results/2026-10-27-confidence-v1.md` (§11 = binding-protocol table, §10 =
