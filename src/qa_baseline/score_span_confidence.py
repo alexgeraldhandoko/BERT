@@ -1,7 +1,7 @@
 """Apply a frozen span-conditioned confidence head to exported dev rank-1 answers.
 
 Run from the repository root:
-  PYTHONPATH=src python score_span_confidence.py \
+  PYTHONPATH=src python qa_baseline.score_span_confidence.py \
       --exports exports/v1/dev_edges \
       --head exports/v1/final_confidence/span_confidence_head.npz \
       --output-dir exports/v1/final_confidence/dev

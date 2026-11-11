@@ -5,7 +5,7 @@ builder: confidence_examples.npz. The head is trained only on `head_train`;
 `calib` is used only to fit the scalar temperature.
 
 Run from the repository root:
-  PYTHONPATH=src python fit_span_confidence.py \
+  PYTHONPATH=src python qa_baseline.fit_span_confidence.py \
       --examples exports/v1/heldout_edges/confidence_examples.npz \
       --output-dir exports/v1/final_confidence
 """

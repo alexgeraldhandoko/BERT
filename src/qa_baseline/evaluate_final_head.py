@@ -1,6 +1,10 @@
 """Apply a frozen scalars+span head to an exported candidate set.
 
-Writes one prediction per question. It does not read candidate EM/F1 labels.
+    Run from the repository root:
+    PYTHONPATH=src python -m qa_baseline.evaluate_final_head \
+        --exports exports/v1/dev \
+        --head exports/v1/heldout/final/head_final.npz \
+        --output exports/v1/final/dev/predictions-span-head.json
 """
 from __future__ import annotations
 
